@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-/// Proves a staged bundle is ours: the Developer ID chain, or the leaf a pre-switch copy pins.
+/// Proves a staged bundle is ours: the personal edition trusts its own leaf, never upstream's team.
 enum BundleSignature {
     /// The team, not the certificate — a leaf is reissued on renewal and on a rename.
     static let developerID = """
@@ -19,7 +19,6 @@ enum BundleSignature {
         // An unsealed bundle can claim any identity, and a nested helper is where one hides.
         let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode)
         guard SecStaticCodeCheckValidity(staticCode, flags, nil) == errSecSuccess else { return false }
-        if satisfiesDeveloperID(staticCode, flags: flags) { return true }
         // A copy installed before the switch knows only the leaf it was itself signed with.
         guard let running = runningLeaf(), let candidate = leaf(of: staticCode) else { return false }
         return running == candidate
