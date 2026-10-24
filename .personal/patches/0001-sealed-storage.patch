@@ -1,0 +1,425 @@
+diff --git a/Tinycast/App/AppCore.swift b/Tinycast/App/AppCore.swift
+index 97e52bbec1af18bfb8a4464670bed70336ddb27b..f4b0ef900a9040211a16569db38e34a2fba0b893 100644
+--- a/Tinycast/App/AppCore.swift
++++ b/Tinycast/App/AppCore.swift
+@@ -253,7 +253,7 @@ final class AppCore {
+     private var relaunchRequested = false
+ 
+     private init() {
+-        let launcherRanking = LauncherRankingStore()
++        let launcherRanking = LauncherRankingStore(persistence: SealedFile.launcherRanking.loadAndSave)
+         let settings = AppSettings()
+         let chatHistory = ChatHistoryStore(directory: AppPaths.applicationSupport())
+         self.launcherRanking = launcherRanking
+diff --git a/Tinycast/Features/Backup/Service/BackupComposer.swift b/Tinycast/Features/Backup/Service/BackupComposer.swift
+index 1fc897423ae1bb1810bfb9da3a77c3caa3cca85a..f2dec63540e6cf8c6901fd534a197ca39a57219e 100644
+--- a/Tinycast/Features/Backup/Service/BackupComposer.swift
++++ b/Tinycast/Features/Backup/Service/BackupComposer.swift
+@@ -37,12 +37,13 @@ enum BackupComposer {
+         if categories.contains(.learning) {
+             // From memory, not the files: the ranking store persists asynchronously.
+             let encoder = BackupBundle.encoder
+-            plan.learning[.ranking] = try? encoder.encode(core.launcherRanking.visits)
++            // Typed searches and calculations stay in their sealed files, never in a plain archive.
++            let visits = core.launcherRanking.visits.mapValues {
++                LauncherVisit(anchor: $0.anchor, openedAt: $0.openedAt, searchTerms: [])
++            }
++            plan.learning[.ranking] = try? encoder.encode(visits)
+             plan.learning[.emoji] = try? encoder.encode(core.frequentEmoji.records)
+-            plan.learning[.calculator] = try? encoder.encode(core.calcHistory.entries)
+-            plan.learningRecords =
+-                core.launcherRanking.visits.count + core.frequentEmoji.records.count
+-                + core.calcHistory.entries.count
++            plan.learningRecords = visits.count + core.frequentEmoji.records.count
+         }
+         return plan
+     }
+diff --git a/Tinycast/Features/Calculator/Service/CalculatorHistoryStore.swift b/Tinycast/Features/Calculator/Service/CalculatorHistoryStore.swift
+index b4ed120d32e9e2b579399c4ec18c828fc0187838..f14140a3076053664c118f0bb0e8ba9803c88c32 100644
+--- a/Tinycast/Features/Calculator/Service/CalculatorHistoryStore.swift
++++ b/Tinycast/Features/Calculator/Service/CalculatorHistoryStore.swift
+@@ -16,7 +16,7 @@ struct CalcHistoryEntry: Identifiable, Codable, Hashable, Sendable {
+ final class CalculatorHistoryStore {
+     private static let cap = 200
+ 
+-    private let fileURL: URL
++    private let file: SealedFile
+ 
+     private(set) var entries: [CalcHistoryEntry]  // newest first
+ 
+@@ -30,10 +30,10 @@ final class CalculatorHistoryStore {
+     /// Bumped on every persisted mutation, so the key above names the entries it filtered.
+     private var revision = 0
+ 
+-    init() {
+-        fileURL = AppPaths.applicationSupport().appendingPathComponent("calculator-history.json")
++    init(file: SealedFile = .calculatorHistory) {
++        self.file = file
+ 
+-        if let data = try? Data(contentsOf: fileURL),
++        if let data = try? file.read(),
+             let decoded = try? JSONDecoder().decode([CalcHistoryEntry].self, from: data)
+         {
+             entries = decoded
+@@ -84,7 +84,7 @@ final class CalculatorHistoryStore {
+     private func persist() {
+         revision &+= 1
+         if let data = try? JSONEncoder().encode(entries) {
+-            try? data.write(to: fileURL, options: .atomic)
++            try? file.write(data)
+         }
+     }
+ }
+diff --git a/Tinycast/Features/Launcher/Model/LauncherRankingStore.swift b/Tinycast/Features/Launcher/Model/LauncherRankingStore.swift
+index e8005fafd99a46a2127369ee8e695323dbfa552c..9e40cc3d4cf7f9f1dc572eb144deb2a003024466 100644
+--- a/Tinycast/Features/Launcher/Model/LauncherRankingStore.swift
++++ b/Tinycast/Features/Launcher/Model/LauncherRankingStore.swift
+@@ -33,8 +33,12 @@ final class LauncherRankingStore {
+     /// Caps pasted input, so one visit cannot store a paragraph as a term.
+     private static let queryLimit = 64
+ 
++    /// Reads and writes the encoded table in place of `fileURL`, as a sealed file does.
++    typealias Persistence = (load: @Sendable () -> Data?, save: @Sendable (Data) -> Void)
++
+     private let fileURL: URL
+     private let now: () -> Date
++    private let persistence: Persistence?
+ 
+     private(set) var visits: [String: LauncherVisit]
+     /// Part of `AppIndex`'s cache key, invalidating a result after a visit or a reset.
+@@ -43,12 +47,20 @@ final class LauncherRankingStore {
+     /// The in-flight persist, awaited by the next one so a burst can't land out of order.
+     @ObservationIgnored private var writeTask: Task<Void, Never>?
+ 
+-    init(fileURL: URL? = nil, now: @escaping () -> Date = Date.init) {
++    init(
++        fileURL: URL? = nil, now: @escaping () -> Date = Date.init, persistence: Persistence? = nil
++    ) {
+         self.fileURL = fileURL ?? Self.defaultFileURL()
+         self.now = now
++        self.persistence = persistence
++        let stored: Data?
++        if let persistence {
++            stored = persistence.load()
++        } else {
++            stored = try? Data(contentsOf: self.fileURL)
++        }
+         let decoded =
+-            (try? Data(contentsOf: self.fileURL))
+-            .flatMap { try? JSONDecoder().decode([String: LauncherVisit].self, from: $0) } ?? [:]
++            stored.flatMap { try? JSONDecoder().decode([String: LauncherVisit].self, from: $0) } ?? [:]
+         visits = Self.live(decoded, at: now())
+     }
+ 
+@@ -146,10 +158,12 @@ final class LauncherRankingStore {
+         // Off-main: this lands on ↵, in front of the launch. Chained, so writes stay ordered.
+         let snapshot = visits
+         let fileURL = fileURL
++        let persistence = persistence
+         let previous = writeTask
+         writeTask = Task.detached(priority: .utility) {
+             await previous?.value
+             guard let data = try? JSONEncoder().encode(snapshot) else { return }
++            if let persistence { return persistence.save(data) }
+             try? data.write(to: fileURL, options: .atomic)
+         }
+     }
+diff --git a/Tinycast/Platform/KeychainSecretStore.swift b/Tinycast/Platform/KeychainSecretStore.swift
+index 7ce3807c62dd9fa7927c61a4ebd4c726d2d7ac4b..14c2ce8639eadaf095d84f81f3775e0a518f4730 100644
+--- a/Tinycast/Platform/KeychainSecretStore.swift
++++ b/Tinycast/Platform/KeychainSecretStore.swift
+@@ -14,6 +14,7 @@ struct KeychainSecretStore: Sendable {
+     static let aiRequestHeaders = KeychainSecretStore(scope: "ai-request-headers")
+     static let mcpSecrets = KeychainSecretStore(scope: "mcp-secrets")
+     static let installedAIEnvironment = KeychainSecretStore(scope: "installed-ai-environment")
++    static let sealedStorageKeys = KeychainSecretStore(scope: "sealed-storage-keys")
+ 
+     init(scope: String, bundleIdentifier: String? = Bundle.main.bundleIdentifier) {
+         service = "\(bundleIdentifier ?? "com.tinycast.app").\(scope)"
+diff --git a/Tinycast/Platform/SealedEnvelope.swift b/Tinycast/Platform/SealedEnvelope.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..964f2653230a417f73ca9d7f9e151a09a5448025
+--- /dev/null
++++ b/Tinycast/Platform/SealedEnvelope.swift
+@@ -0,0 +1,44 @@
++import CryptoKit
++import Foundation
++
++/// AES-256-GCM behind a versioned header; header and purpose are authenticated, never trusted.
++enum SealedEnvelope {
++    enum Failure: Error, Equatable {
++        case truncated
++        case unknownFormat
++        case unsupportedVersion
++        case authentication
++    }
++
++    static let magic = Data("TCSE".utf8)
++    static let version: UInt8 = 1
++    /// A random 96-bit nonce and a 128-bit tag, as `AES.GCM.SealedBox.combined` lays them out.
++    private static let boxOverhead = 12 + 16
++
++    private static var header: Data { magic + [version] }
++
++    static func seal(_ plaintext: Data, key: SymmetricKey, purpose: String) throws -> Data {
++        let box = try AES.GCM.seal(
++            plaintext, using: key, nonce: AES.GCM.Nonce(),
++            authenticating: associatedData(purpose: purpose))
++        guard let combined = box.combined else { throw Failure.unknownFormat }
++        return header + combined
++    }
++
++    static func open(_ envelope: Data, key: SymmetricKey, purpose: String) throws(Failure) -> Data {
++        let header = header
++        guard envelope.count >= header.count + boxOverhead else { throw .truncated }
++        guard envelope.prefix(magic.count) == magic else { throw .unknownFormat }
++        guard envelope[envelope.startIndex + magic.count] == version else { throw .unsupportedVersion }
++        do {
++            let box = try AES.GCM.SealedBox(combined: envelope.dropFirst(header.count))
++            return try AES.GCM.open(box, using: key, authenticating: associatedData(purpose: purpose))
++        } catch {
++            throw .authentication
++        }
++    }
++
++    private static func associatedData(purpose: String) -> Data {
++        header + Data("tinycast-sealed-file:\(purpose)".utf8)
++    }
++}
+diff --git a/Tinycast/Platform/SealedFile.swift b/Tinycast/Platform/SealedFile.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..15ed7913b6b4f28db1527bc7d96d4a1185122d07
+--- /dev/null
++++ b/Tinycast/Platform/SealedFile.swift
+@@ -0,0 +1,231 @@
++import CryptoKit
++import Darwin
++import Foundation
++import Synchronization
++
++/// A file that only reaches disk sealed under its own Keychain key; a failed read blocks writes.
++final class SealedFile: Sendable {
++    enum Failure: Error, Equatable {
++        /// The file exists but its key is gone; a new key would make it unreadable for good.
++        case keyMissing
++        case keychain(OSStatus)
++        case corrupted(SealedEnvelope.Failure)
++        case tooLarge
++        case io(Int32)
++        case migrationMismatch
++        /// A read failed earlier this session, so writing could overwrite what it holds.
++        case blocked
++    }
++
++    /// The Keychain accounts, one per sealed file, so erasing one key leaves the others readable.
++    enum Account {
++        static let launcherHistory = UUID(uuidString: "6B2F4E1A-0C7D-4B53-9E58-2D4A61C3F0A1")!
++        static let calculatorHistory = UUID(uuidString: "C1E5A7D2-3F84-4E09-A6B1-7D0F2C95E4B3")!
++        static let launcherRanking = UUID(uuidString: "4A9D0B63-E2C1-47F8-8B5E-91C3D6A70F2E")!
++    }
++
++    static let launcherHistory = SealedFile(
++        name: "command-input-history.enc", account: Account.launcherHistory)
++    static let calculatorHistory = SealedFile(
++        name: "calculator-history.enc", legacyName: "calculator-history.json",
++        account: Account.calculatorHistory)
++    static let launcherRanking = SealedFile(
++        name: "launcher-ranking.enc", legacyName: "launcher-ranking.json",
++        account: Account.launcherRanking)
++
++    /// Posted with the file name when a read or write fails; the coordinator turns it into a HUD.
++    static let didFailNotification = Notification.Name("SealedFileDidFail")
++    static let sizeLimit = 16 * 1024 * 1024
++
++    let url: URL
++    private let legacyURL: URL?
++    private let purpose: String
++    private let account: UUID
++    private let keychain: KeychainSecretStore
++    private let isBlocked = Mutex(false)
++
++    init(
++        name: String, legacyName: String? = nil, account: UUID,
++        directory: URL = AppPaths.applicationSupport(),
++        keychain: KeychainSecretStore = .sealedStorageKeys
++    ) {
++        url = directory.appendingPathComponent(name, isDirectory: false)
++        legacyURL = legacyName.map { directory.appendingPathComponent($0, isDirectory: false) }
++        purpose = name
++        self.account = account
++        self.keychain = keychain
++    }
++
++    var blocked: Bool { isBlocked.withLock { $0 } }
++
++    /// The plaintext, or nil when nothing was ever stored. A legacy plain file is sealed first.
++    func read() throws(Failure) -> Data? {
++        do {
++            let plaintext = try readOrMigrate()
++            isBlocked.withLock { $0 = false }
++            return plaintext
++        } catch {
++            isBlocked.withLock { $0 = true }
++            report()
++            throw error
++        }
++    }
++
++    func write(_ plaintext: Data) throws(Failure) {
++        guard !blocked else { throw .blocked }
++        do {
++            try seal(plaintext)
++        } catch {
++            report()
++            throw error
++        }
++    }
++
++    /// Deletes the file and its key, so a copy of it left anywhere can no longer be opened.
++    func erase() throws(Failure) {
++        for target in [url, legacyURL].compactMap(\.self) {
++            guard unlink(target.path) == 0 || errno == ENOENT else { throw .io(errno) }
++        }
++        do {
++            try keychain.removeSecret(for: account)
++        } catch let KeychainSecretStore.StoreError.keychain(status) {
++            throw .keychain(status)
++        } catch {
++            throw .keychain(errSecParam)
++        }
++        isBlocked.withLock { $0 = false }
++    }
++
++    private func readOrMigrate() throws(Failure) -> Data? {
++        let sealed = try contents(of: url)
++        guard let legacyURL, let legacy = try contents(of: legacyURL) else {
++            guard let sealed else { return nil }
++            return try open(sealed)
++        }
++        // Both exist after a crash mid-migration or a return to the official build: newer wins.
++        if let sealed, modificationDate(url) >= modificationDate(legacyURL) {
++            let plaintext = try open(sealed)
++            try remove(legacyURL)
++            return plaintext
++        }
++        try seal(legacy)
++        guard let resealed = try contents(of: url), try open(resealed) == legacy else {
++            throw .migrationMismatch
++        }
++        try remove(legacyURL)
++        return legacy
++    }
++
++    private func open(_ envelope: Data) throws(Failure) -> Data {
++        guard let key = try existingKey() else { throw .keyMissing }
++        do {
++            return try SealedEnvelope.open(envelope, key: key, purpose: purpose)
++        } catch {
++            throw .corrupted(error)
++        }
++    }
++
++    private func seal(_ plaintext: Data) throws(Failure) {
++        let key: SymmetricKey
++        if let existing = try existingKey() {
++            key = existing
++        } else if FileManager.default.fileExists(atPath: url.path) {
++            throw .keyMissing
++        } else {
++            key = try createKey()
++        }
++        let envelope: Data
++        do {
++            envelope = try SealedEnvelope.seal(plaintext, key: key, purpose: purpose)
++        } catch {
++            throw .corrupted(.unknownFormat)
++        }
++        try replaceAtomically(with: envelope)
++    }
++
++    /// A private temporary beside the file, renamed over it: only sealed bytes are written.
++    private func replaceAtomically(with envelope: Data) throws(Failure) {
++        let temporary = url.deletingLastPathComponent()
++            .appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
++        let descriptor = Darwin.open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
++        guard descriptor >= 0 else { throw .io(errno) }
++        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
++        do {
++            try handle.write(contentsOf: envelope)
++            try handle.synchronize()
++            try handle.close()
++        } catch {
++            unlink(temporary.path)
++            throw .io(EIO)
++        }
++        guard rename(temporary.path, url.path) == 0 else {
++            let code = errno
++            unlink(temporary.path)
++            throw .io(code)
++        }
++    }
++
++    private func contents(of file: URL) throws(Failure) -> Data? {
++        var status = stat()
++        guard stat(file.path, &status) == 0 else {
++            if errno == ENOENT { return nil }
++            throw .io(errno)
++        }
++        guard status.st_size <= off_t(Self.sizeLimit) else { throw .tooLarge }
++        do {
++            return try Data(contentsOf: file)
++        } catch {
++            throw .io(EIO)
++        }
++    }
++
++    private func remove(_ file: URL) throws(Failure) {
++        guard unlink(file.path) == 0 || errno == ENOENT else { throw .io(errno) }
++    }
++
++    private func modificationDate(_ file: URL) -> Date {
++        let attributes = try? FileManager.default.attributesOfItem(atPath: file.path)
++        return attributes?[.modificationDate] as? Date ?? .distantPast
++    }
++
++    private func existingKey() throws(Failure) -> SymmetricKey? {
++        let encoded: String?
++        do {
++            encoded = try keychain.secret(for: account)
++        } catch let KeychainSecretStore.StoreError.keychain(status) {
++            throw .keychain(status)
++        } catch {
++            throw .keychain(errSecDecode)
++        }
++        guard let encoded else { return nil }
++        guard let bytes = Data(base64Encoded: encoded), bytes.count == 32 else {
++            throw .keychain(errSecDecode)
++        }
++        return SymmetricKey(data: bytes)
++    }
++
++    private func createKey() throws(Failure) -> SymmetricKey {
++        let key = SymmetricKey(size: .bits256)
++        let encoded = key.withUnsafeBytes { Data($0).base64EncodedString() }
++        do {
++            try keychain.setSecret(encoded, for: account)
++        } catch let KeychainSecretStore.StoreError.keychain(status) {
++            throw .keychain(status)
++        } catch {
++            throw .keychain(errSecParam)
++        }
++        return key
++    }
++
++    /// The shape `LauncherRankingStore` persists through, so its harnesses never see this type.
++    var loadAndSave: (load: @Sendable () -> Data?, save: @Sendable (Data) -> Void) {
++        (load: { try? self.read() }, save: { try? self.write($0) })
++    }
++
++    private func report() {
++        let name = url.lastPathComponent
++        Task { @MainActor in
++            NotificationCenter.default.post(name: Self.didFailNotification, object: name)
++        }
++    }
++}

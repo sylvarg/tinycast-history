@@ -1,0 +1,821 @@
+diff --git a/Tests/launcher-history-test.swift b/Tests/launcher-history-test.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..07686bc09c46602a9066c10619a5f5fc165914d8
+--- /dev/null
++++ b/Tests/launcher-history-test.swift
+@@ -0,0 +1,329 @@
++import Foundation
++
++/// The launcher history's rules, driven through the shipped model: recording, recall, display.
++@main
++struct LauncherHistoryTests {
++    nonisolated(unsafe) static var failures = 0
++    nonisolated(unsafe) static var passes = 0
++
++    static func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
++        if condition() {
++            passes += 1
++        } else {
++            failures += 1
++            print("FAIL: \(message)")
++        }
++    }
++
++    static let t0 = Date(timeIntervalSince1970: 1_800_000_000)
++
++    static func at(_ seconds: TimeInterval) -> Date { t0.addingTimeInterval(seconds) }
++
++    static func main() {
++        recordsInOrder()
++        capsAtCapacity()
++        movesARepeatInsteadOfDuplicating()
++        keepsTextAsTyped()
++        roundTripsThroughJSON()
++        recallsFromAnEmptyField()
++        neverRecallsFromTypedText()
++        editingEndsTheWalk()
++        recallDoesNotRecord()
++        promotesARecalledEntryOnValidation()
++        recordsAShownResultOnceRead()
++        recordsAShownResultWhenThePaletteHides()
++        ignoresIntermediateAndUnusableResults()
++        validationAndDisplayAreOneEvent()
++        ignoresTextAnActionWrote()
++        undoesARefusedConfirmation()
++        undoesALaunchThatAskedForArguments()
++        tellsRewritesFromKeystrokesByToken()
++        forgetsEverythingOnLock()
++
++        print("\(passes) passed, \(failures) failed")
++        if failures > 0 { exit(1) }
++    }
++
++    // MARK: - LauncherHistory
++
++    static func recordsInOrder() {
++        var history = LauncherHistory()
++        expect(history.entries.isEmpty, "a new history is empty")
++        expect(history.record("saf", at: at(0)), "records a typed query")
++        expect(history.texts == ["saf"], "one entry")
++        history.record("12 * 3", at: at(1))
++        history.record("1,5 * 2", at: at(2))
++        expect(history.texts == ["1,5 * 2", "12 * 3", "saf"], "newest first")
++        expect(!history.record("", at: at(3)), "an empty string is not recorded")
++        expect(!history.record("  \n\t ", at: at(3)), "whitespace alone is not recorded")
++        expect(history.entries.count == 3, "blank input left the history unchanged")
++    }
++
++    static func capsAtCapacity() {
++        var history = LauncherHistory()
++        for index in 0..<(LauncherHistory.capacity + 25) {
++            history.record("q\(index)", at: at(Double(index)))
++        }
++        expect(LauncherHistory.capacity == 100, "the history keeps one hundred entries")
++        expect(history.entries.count == LauncherHistory.capacity, "never more than the capacity")
++        expect(history.texts.first == "q124", "the newest survives")
++        expect(history.texts.last == "q25", "the oldest beyond the capacity are dropped")
++        let decoded = LauncherHistory(entries: (0..<150).map {
++            LauncherHistoryEntry(id: UUID(), text: "x\($0)", lastValidatedAt: at(0))
++        })
++        expect(decoded.entries.count == 100, "an oversized list is trimmed on the way in")
++    }
++
++    static func movesARepeatInsteadOfDuplicating() {
++        var history = LauncherHistory()
++        history.record("C", at: at(0))
++        history.record("B", at: at(1))
++        history.record("A", at: at(2))
++        let idOfC = history.entries[2].id
++        history.record("A", at: at(3))
++        expect(history.texts == ["A", "B", "C"], "validating the newest again adds nothing")
++        history.record("C", at: at(4))
++        expect(history.texts == ["C", "A", "B"], "an older text moves to the front")
++        expect(history.entries.count == 3, "and the count stays the same")
++        expect(history.entries[0].id == idOfC, "it keeps its identifier")
++        expect(history.entries[0].lastValidatedAt == at(4), "its validation date moves on")
++    }
++
++    static func keepsTextAsTyped() {
++        var history = LauncherHistory()
++        let text = "  Café ☕️ 12,5 € → $  "
++        history.record(text, at: at(0))
++        expect(history.texts == [text], "spaces and Unicode are kept exactly")
++        history.record("12*3", at: at(1))
++        history.record("12 * 3", at: at(2))
++        expect(history.entries.count == 3, "different spacing is a different input")
++    }
++
++    static func roundTripsThroughJSON() {
++        var history = LauncherHistory()
++        history.record("ŝaf ✓", at: at(0))
++        history.record("1,5 * 2", at: at(1))
++        let decoded = (try? history.encoded()).flatMap { try? LauncherHistory.decoded(from: $0) }
++        expect(decoded == history, "entries, ids and dates survive encoding")
++        expect((try? LauncherHistory.decoded(from: Data("{".utf8))) == nil, "garbage does not decode")
++    }
++
++    // MARK: - Recall
++
++    static func recallsFromAnEmptyField() {
++        var session = LauncherHistorySession()
++        let history = ["A", "B", "C"]
++        expect(session.upArrow(query: "", history: []) == .ignore, "an empty history leaves ↑ alone")
++        expect(session.upArrow(query: "", history: history) == .write("A"), "first ↑ writes the newest")
++        _ = session.observe(query: "A", rewritten: true, resultShown: false, at: at(0))
++        expect(session.origin == .recalled, "the written text is known as recalled")
++        expect(session.upArrow(query: "A", history: history) == .write("B"), "the next ↑ goes older")
++        _ = session.observe(query: "B", rewritten: true, resultShown: false, at: at(1))
++        expect(session.upArrow(query: "B", history: history) == .write("C"), "and older again")
++        _ = session.observe(query: "C", rewritten: true, resultShown: false, at: at(2))
++        expect(session.upArrow(query: "C", history: history) == .stay, "the oldest stops, never loops")
++        expect(session.upArrow(query: "C", history: history) == .stay, "held ↑ keeps stopping")
++        _ = session.observe(query: "C", rewritten: false, resultShown: true, at: at(3))
++        expect(session.upArrow(query: "C", history: history) == .stay, "results moving do not end it")
++    }
++
++    static func neverRecallsFromTypedText() {
++        var session = LauncherHistorySession()
++        _ = session.observe(query: "s", rewritten: false, resultShown: false, at: at(0))
++        expect(session.upArrow(query: "s", history: ["A"]) == .ignore, "typed text keeps ↑ for rows")
++        _ = session.observe(query: " ", rewritten: false, resultShown: false, at: at(1))
++        expect(session.upArrow(query: " ", history: ["A"]) == .ignore, "a space is not an empty field")
++    }
++
++    static func editingEndsTheWalk() {
++        var session = LauncherHistorySession()
++        let history = ["A", "B"]
++        _ = session.upArrow(query: "", history: history)
++        _ = session.observe(query: "A", rewritten: true, resultShown: false, at: at(0))
++        _ = session.observe(query: "Ax", rewritten: false, resultShown: false, at: at(1))
++        expect(session.recall == nil, "typing ends the walk")
++        expect(session.upArrow(query: "Ax", history: history) == .ignore, "↑ is the rows' again")
++        _ = session.observe(query: "A", rewritten: false, resultShown: false, at: at(2))
++        expect(session.upArrow(query: "A", history: history) == .ignore, "deleting back does not resume")
++        _ = session.observe(query: "", rewritten: false, resultShown: false, at: at(3))
++        expect(session.upArrow(query: "", history: history) == .write("A"), "emptying it starts afresh")
++        _ = session.observe(query: "A", rewritten: true, resultShown: false, at: at(4))
++        _ = session.left(at: at(5), paletteHidden: true)
++        expect(session.upArrow(query: "A", history: history) == .ignore, "closing ends the walk")
++        _ = session.observe(query: "Z", rewritten: true, resultShown: false, at: at(6))
++        expect(session.origin == .rewritten, "another rewrite is not a recall")
++    }
++
++    static func recallDoesNotRecord() {
++        var session = LauncherHistorySession()
++        _ = session.upArrow(query: "", history: ["12 * 3"])
++        var recorded = session.observe(query: "12 * 3", rewritten: true, resultShown: true, at: at(0))
++        recorded += session.observe(query: "12 * 3", rewritten: false, resultShown: true, at: at(5))
++        recorded += session.left(at: at(10), paletteHidden: true)
++        expect(recorded.isEmpty, "showing a recalled entry's result records nothing")
++    }
++
++    static func promotesARecalledEntryOnValidation() {
++        var history = LauncherHistory()
++        for text in ["C", "B", "A"] { history.record(text, at: at(0)) }
++        let idOfC = history.entries[2].id
++        var session = LauncherHistorySession()
++        for (index, text) in ["A", "B", "C"].enumerated() {
++            let step = session.upArrow(query: session.query, history: history.texts)
++            expect(step == .write(text), "↑ to \(text)")
++            _ = session.observe(query: text, rewritten: true, resultShown: true, at: at(Double(index)))
++        }
++        expect(history.texts == ["A", "B", "C"], "recalling C leaves the order alone")
++        guard let validated = session.validate() else { return expect(false, "validation yields C") }
++        history.record(validated, at: at(9))
++        expect(history.texts == ["C", "A", "B"], "validating C moves it to the front")
++        expect(history.entries.count == 3 && history.entries[0].id == idOfC, "same entry, no copy")
++        expect(history.entries[0].lastValidatedAt == at(9), "with a fresh validation date")
++    }
++
++    // MARK: - Shown results
++
++    static func recordsAShownResultOnceRead() {
++        var session = LauncherHistorySession()
++        var recorded = session.observe(query: "12 * 3", rewritten: false, resultShown: true, at: at(0))
++        recorded += session.observe(query: "12 * 3", rewritten: false, resultShown: true, at: at(0.2))
++        expect(recorded.isEmpty, "nothing yet while the result is on screen")
++        recorded += session.observe(query: "12 * 3 +", rewritten: false, resultShown: false, at: at(2))
++        expect(recorded == ["12 * 3"], "a result read before the edit is kept")
++        recorded = session.observe(query: "1,5 * 2", rewritten: false, resultShown: true, at: at(3))
++        recorded += session.observe(query: "", rewritten: false, resultShown: false, at: at(4))
++        expect(recorded == ["1,5 * 2"], "the original text is kept, decimal comma included")
++    }
++
++    static func recordsAShownResultWhenThePaletteHides() {
++        var session = LauncherHistorySession()
++        _ = session.observe(query: "time in tokyo", rewritten: false, resultShown: true, at: at(0))
++        let recorded = session.left(at: at(0.1), paletteHidden: true)
++        expect(recorded == ["time in tokyo"], "Escape or a click away keeps the shown result")
++        expect(session.left(at: at(1), paletteHidden: true).isEmpty, "a second hide is not a second event")
++        let again = session.observe(query: "time in tokyo", rewritten: false, resultShown: true, at: at(9))
++        expect(again.isEmpty && session.shown == nil, "showing the same screen again records nothing")
++    }
++
++    static func ignoresIntermediateAndUnusableResults() {
++        var session = LauncherHistorySession()
++        var recorded = session.observe(query: "12*3", rewritten: false, resultShown: true, at: at(0))
++        recorded += session.observe(query: "12*34", rewritten: false, resultShown: true, at: at(0.15))
++        expect(recorded.isEmpty, "a result typed straight past is not kept")
++        recorded += session.observe(query: "12*345", rewritten: false, resultShown: true, at: at(0.3))
++        recorded += session.left(at: at(1), paletteHidden: true)
++        expect(recorded == ["12*345"], "only the result left on screen is")
++        session = LauncherHistorySession()
++        recorded = session.observe(query: "100 usd in", rewritten: false, resultShown: false, at: at(0))
++        recorded += session.observe(query: "10 usd in eur", rewritten: false, resultShown: false, at: at(1))
++        recorded += session.left(at: at(5), paletteHidden: true)
++        expect(recorded.isEmpty, "loading, errors and plain matches are not results")
++        recorded = session.observe(query: "10 usd in eur", rewritten: false, resultShown: true, at: at(6))
++        recorded += session.left(at: at(7), paletteHidden: false)
++        expect(recorded == ["10 usd in eur"], "the result once it arrives is")
++        session = LauncherHistorySession()
++        recorded = session.observe(query: "2^8", rewritten: false, resultShown: true, at: at(0))
++        recorded += session.left(at: at(0.1), paletteHidden: false)
++        expect(recorded.isEmpty, "a screen swapped away mid-typing does not count as read")
++    }
++
++    static func validationAndDisplayAreOneEvent() {
++        var session = LauncherHistorySession()
++        var recorded = session.observe(query: "12 * 3", rewritten: false, resultShown: true, at: at(0))
++        let validated = session.validate()
++        recorded += session.left(at: at(3), paletteHidden: true)
++        expect(validated == "12 * 3" && recorded.isEmpty, "copying a shown answer records it once")
++        session = LauncherHistorySession()
++        _ = session.observe(query: "", rewritten: false, resultShown: false, at: at(0))
++        expect(session.validate() == nil, "an action with an empty field records nothing")
++        _ = session.observe(query: "saf", rewritten: false, resultShown: false, at: at(1))
++        expect(session.validate() == "saf", "opening Safari from `saf` records `saf`")
++    }
++
++    static func ignoresTextAnActionWrote() {
++        var session = LauncherHistorySession()
++        _ = session.observe(query: "12 * 3", rewritten: false, resultShown: true, at: at(0))
++        expect(session.validate() == "12 * 3", "⌘↵ validates the expression it chains from")
++        var recorded = session.observe(query: "36", rewritten: true, resultShown: true, at: at(0.1))
++        recorded += session.left(at: at(5), paletteHidden: true)
++        expect(recorded.isEmpty, "the answer it wrote is not a new input")
++        expect(session.validate() == nil, "nor is an action on it")
++        recorded = session.observe(query: "36 + 4", rewritten: false, resultShown: true, at: at(6))
++        recorded += session.left(at: at(8), paletteHidden: true)
++        expect(recorded == ["36 + 4"], "but typing onto it is")
++    }
++
++    static func tellsRewritesFromKeystrokesByToken() {
++        var session = LauncherHistorySession()
++        let first = UUID()
++        _ = session.observe(query: "", rewriteToken: first, resultShown: false, at: at(0))
++        expect(session.upArrow(query: "", history: ["A", "B"]) == .write("A"), "↑ writes A")
++        let recallToken = UUID()
++        _ = session.observe(query: "A", rewriteToken: recallToken, resultShown: true, at: at(1))
++        expect(session.origin == .recalled, "a new token with the written text is the recall")
++        _ = session.observe(query: "Ab", rewriteToken: recallToken, resultShown: false, at: at(2))
++        expect(session.origin == .typed && session.recall == nil, "the same token is a keystroke")
++        _ = session.observe(query: "42", rewriteToken: UUID(), resultShown: true, at: at(3))
++        expect(session.origin == .rewritten, "a new token with other text is an action's rewrite")
++
++        var compact = LauncherHistorySession()
++        expect(compact.upArrow(query: "", history: ["7 * 6"]) == .write("7 * 6"), "↑ in the compact bar")
++        let recorded = compact.observe(query: "7 * 6", rewriteToken: UUID(), resultShown: true, at: at(0))
++        expect(compact.origin == .recalled, "the list mounting after the recall still knows it")
++        let left = compact.left(at: at(9), paletteHidden: true)
++        expect(recorded.isEmpty && left.isEmpty, "and records nothing")
++        var typed = LauncherHistorySession()
++        _ = typed.observe(query: "7 * 6", rewriteToken: UUID(), resultShown: true, at: at(0))
++        expect(typed.origin == .typed, "typing that expands the compact bar is typing")
++    }
++
++    // MARK: - Undo
++
++    static func undoesARefusedConfirmation() {
++        var undo = LauncherHistoryUndo()
++        let before = LauncherHistory()
++        var after = before
++        after.record("empty trash", at: at(0))
++        undo.recorded(before: before, after: after, at: at(0))
++        undo.confirmationBegan(at: at(0.3))
++        expect(undo.confirmationEnded(accepted: false, current: after) == before, "Cancel undoes it")
++        undo.recorded(before: before, after: after, at: at(1))
++        undo.confirmationBegan(at: at(1.2))
++        expect(undo.confirmationEnded(accepted: true, current: after) == nil, "Confirm keeps it")
++        undo.recorded(before: before, after: after, at: at(2))
++        undo.confirmationBegan(at: at(30))
++        expect(undo.confirmationEnded(accepted: false, current: after) == nil, "a later dialog is unrelated")
++        var later = after
++        later.record("other", at: at(41))
++        undo.recorded(before: before, after: after, at: at(40))
++        undo.confirmationBegan(at: at(40.5))
++        expect(undo.confirmationEnded(accepted: false, current: later) == nil, "a newer write is kept")
++        var menuThenLaunch = after
++        menuThenLaunch.record("empty trash", at: at(50.1))
++        undo.recorded(before: before, after: after, at: at(50))
++        undo.recorded(before: after, after: menuThenLaunch, at: at(50.1))
++        undo.confirmationBegan(at: at(50.2))
++        expect(
++            undo.confirmationEnded(accepted: false, current: menuThenLaunch) == before,
++            "a menu row and the launch it runs undo together")
++    }
++
++    static func undoesALaunchThatAskedForArguments() {
++        var undo = LauncherHistoryUndo()
++        let before = LauncherHistory()
++        var after = before
++        after.record("deploy", at: at(0))
++        undo.recorded(before: before, after: after, at: at(0))
++        expect(undo.withdraw(current: after, at: at(0)) == before, "a missing argument undoes it")
++        undo.recorded(before: before, after: after, at: at(1))
++        expect(undo.withdraw(current: after, at: at(9)) == nil, "but only for its own launch")
++    }
++
++    static func forgetsEverythingOnLock() {
++        var session = LauncherHistorySession()
++        _ = session.upArrow(query: "", history: ["A"])
++        _ = session.observe(query: "A", rewritten: true, resultShown: true, at: at(0))
++        session.reset()
++        expect(session == LauncherHistorySession(), "locking drops the walk and pending results")
++    }
++}
+diff --git a/Tests/personal-edition-test.swift b/Tests/personal-edition-test.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..aa3232745abbb72eebbb8cc279c21d20bdb3a19b
+--- /dev/null
++++ b/Tests/personal-edition-test.swift
+@@ -0,0 +1,88 @@
++import Foundation
++
++/// The edition's release identity: `-h.N` revisions, our feed, and what is offered as an update.
++@main
++struct PersonalEditionTests {
++    nonisolated(unsafe) static var failures = 0
++    nonisolated(unsafe) static var passes = 0
++
++    static func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
++        if condition() {
++            passes += 1
++        } else {
++            failures += 1
++            print("FAIL: \(message)")
++        }
++    }
++
++    static func main() {
++        parsesRevisions()
++        ordersRevisionsBetweenOfficialReleases()
++        offersRevisionsFromThisRepository()
++
++        print("\(passes) passed, \(failures) failed")
++        if failures > 0 { exit(1) }
++    }
++
++    static func version(_ text: String) -> AppVersion {
++        guard let parsed = AppVersion(text) else { fatalError("\(text) must parse") }
++        return parsed
++    }
++
++    static func parsesRevisions() {
++        expect(AppVersion("0.12.1-h.1")?.revision == 1, "reads the personal revision")
++        expect(AppVersion("v0.12.1-h.12")?.description == "0.12.1-h.12", "round-trips a revision tag")
++        expect(AppVersion("0.12.1-h.3")?.isPrerelease == false, "a revision is a stable release")
++        expect(AppVersion("0.12.1-h.3")?.beta == nil, "and carries no beta counter")
++        expect(AppVersion("0.12.1-h") == nil, "rejects a revision without a number")
++        expect(AppVersion("0.12.1-h.x") == nil, "rejects a non-numeric revision")
++        expect(AppVersion("0.12.1-h.-1") == nil, "rejects a signed revision")
++        expect(AppVersion("0.12.1-p.1") == nil, "still rejects channels that never ship")
++        expect(AppVersion("0.2.0-beta.42")?.beta == 42, "upstream's betas still parse")
++    }
++
++    static func ordersRevisionsBetweenOfficialReleases() {
++        expect(version("0.12.1-h.1") > version("0.12.1"), "a revision outranks the release it rebuilds")
++        expect(version("0.12.1-h.2") > version("0.12.1-h.1"), "a correction outranks the revision before")
++        expect(version("0.12.1-h.10") > version("0.12.1-h.9"), "revisions compare numerically")
++        expect(version("0.12.2") > version("0.12.1-h.9"), "the next official release outranks them")
++        expect(version("0.12.2-h.1") > version("0.12.2"), "and its own first revision outranks it")
++        expect(version("0.13.0-beta.1") > version("0.12.2-h.4"), "a newer triple still wins")
++        expect(version("0.12.1-h.1") != version("0.12.1"), "a revision is never equal to the release")
++        expect(version("0.12.1-h.0") == version("0.12.1-h.0"), "equal revisions are equal")
++    }
++
++    static func feed(_ tags: [(String, Bool)]) -> Data {
++        let releases = tags.map { tag, prerelease in
++            """
++            {"tag_name": "\(tag)", "prerelease": \(prerelease), "draft": false, "body": "notes",
++             "published_at": "2026-10-24T00:00:00Z",
++             "assets": [{"name": "Tinycast-\(tag.dropFirst()).zip", "size": 10,
++                         "browser_download_url": "https://example.invalid/\(tag)/Tinycast.zip"},
++                        {"name": "Tinycast-\(tag.dropFirst()).dmg", "size": 10,
++                         "browser_download_url": "https://example.invalid/x.dmg"}]}
++            """
++        }
++        return Data("[\(releases.joined(separator: ","))]".utf8)
++    }
++
++    static func offersRevisionsFromThisRepository() {
++        expect(ReleaseFeed.repository == "sylvarg/tinycast-history", "updates come from this repository")
++        let data = feed([("v0.12.1-h.1", false), ("v0.12.1-h.2", false), ("v0.12.2-beta.1", true)])
++        let newest = ReleaseFeed.newest(from: data, channel: .stable, architecture: .appleSilicon)
++        expect(newest?.tag == "v0.12.1-h.2", "the stable channel takes the newest revision, never a beta")
++        expect(newest?.assetURL.lastPathComponent == "Tinycast.zip", "and installs the zip, not the DMG")
++        let offered = { (running: String) in
++            ReleaseFeed.offer(newest, running: version(running), skipped: nil)?.tag
++        }
++        expect(offered("0.12.1-h.1") == "v0.12.1-h.2", "a correction is offered over the revision before")
++        expect(offered("0.12.1") == "v0.12.1-h.2", "the official build is offered this edition's revision")
++        expect(offered("0.12.1-h.2") == nil, "nothing is offered to the newest revision")
++        expect(offered("0.12.2") == nil, "an older base is never offered over a newer one")
++        let mislabelled = feed([("v0.12.1-h.3", true)])
++        expect(
++            ReleaseFeed.newest(from: mislabelled, channel: .stable, architecture: .appleSilicon) == nil,
++            "a revision published as a prerelease is skipped as mis-published")
++        expect(ReleaseChannel(bundleID: "com.tinycast.app") == .stable, "the edition keeps the stable id")
++    }
++}
+diff --git a/Tests/personal-signature-probe.swift b/Tests/personal-signature-probe.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..65d99a220579402507274f1b919dddd3ddd0869e
+--- /dev/null
++++ b/Tests/personal-signature-probe.swift
+@@ -0,0 +1,40 @@
++import Foundation
++
++/// Signed by `.personal/tests/signing.sh` to answer as the app would: bundle trust, Keychain.
++@main
++struct PersonalSignatureProbe {
++    static func main() {
++        let arguments = CommandLine.arguments
++        guard arguments.count >= 3 else { fail("usage: trust <bundle> | keychain <write|read> <dir>") }
++        switch (arguments[1], arguments[2]) {
++        case ("trust", let path):
++            print(BundleSignature.isTrusted(URL(fileURLWithPath: path)) ? "trusted" : "refused")
++        case ("keychain", let mode) where arguments.count == 4:
++            let file = SealedFile(
++                name: "probe.enc", account: UUID(uuidString: "0B5E0A6E-1C2D-4E3F-8A9B-0C1D2E3F4A5B")!,
++                directory: URL(fileURLWithPath: arguments[3]),
++                keychain: KeychainSecretStore(scope: "probe", bundleIdentifier: "com.tinycast.probe"))
++            do {
++                if mode == "write" {
++                    try file.write(Data("probe-secret".utf8))
++                    print("written")
++                } else if mode == "erase" {
++                    try file.erase()
++                    print("erased")
++                } else {
++                    let data = try file.read()
++                    print(data.map { String(bytes: $0, encoding: .utf8) ?? "?" } ?? "absent")
++                }
++            } catch {
++                fail("failed: \(error)")
++            }
++        default:
++            fail("unknown command")
++        }
++    }
++
++    static func fail(_ message: String) -> Never {
++        FileHandle.standardError.write(Data((message + "\n").utf8))
++        exit(1)
++    }
++}
+diff --git a/Tests/sealed-storage-test.swift b/Tests/sealed-storage-test.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..959ad630cc64fb7287d5ca1066951c801852733a
+--- /dev/null
++++ b/Tests/sealed-storage-test.swift
+@@ -0,0 +1,340 @@
++import CryptoKit
++import Foundation
++
++/// The sealed files through the shipped code: envelope, Keychain key, migration, failure modes.
++@main
++@MainActor
++struct SealedStorageTests {
++    static var failures = 0
++    static var passes = 0
++
++    static func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
++        if condition() {
++            passes += 1
++        } else {
++            failures += 1
++            print("FAIL: \(message)")
++        }
++    }
++
++    /// A synthetic input that must never appear on disk outside a sealed envelope.
++    static let marker = "SYNTHETIC-MARKER-7f3e-ÿ-12,5*2"
++    static let keychain = KeychainSecretStore(
++        scope: "sealed-storage-test-\(UUID().uuidString)", bundleIdentifier: "com.tinycast.tests")
++    static var roots: [URL] = []
++    static var accounts: [UUID] = []
++
++    static func main() async {
++        sealsAndOpensEnvelopes()
++        refusesTamperedEnvelopes()
++        writesOnlySealedPrivateFiles()
++        refusesAMissingKeyOrACorruptFile()
++        migratesLegacyFilesOnce()
++        keepsTheNewerCopyWhenBothExist()
++        erasesOneStoreAndItsKeyOnly()
++        boundsTheFileSize()
++        reportsAFailedWrite()
++        sealsTheLauncherHistory()
++        await sealsTheRankingTable()
++        sealsCalculatorHistory()
++        cleanUp()
++
++        print("\(passes) passed, \(failures) failed")
++        if failures > 0 { exit(1) }
++    }
++
++    // MARK: - Envelope
++
++    static func sealsAndOpensEnvelopes() {
++        let key = SymmetricKey(size: .bits256)
++        let plaintext = Data(marker.utf8)
++        guard let first = try? SealedEnvelope.seal(plaintext, key: key, purpose: "a"),
++            let second = try? SealedEnvelope.seal(plaintext, key: key, purpose: "a")
++        else { return expect(false, "sealing succeeds") }
++        expect((try? SealedEnvelope.open(first, key: key, purpose: "a")) == plaintext, "round-trips")
++        expect(first.prefix(4) == Data("TCSE".utf8) && first[4] == 1, "a versioned header leads")
++        expect(first.range(of: plaintext) == nil, "the plaintext is not in the envelope")
++        expect(first != second, "two seals of one plaintext differ")
++        expect(first.subdata(in: 5..<17) != second.subdata(in: 5..<17), "each seal takes a fresh nonce")
++    }
++
++    static func refusesTamperedEnvelopes() {
++        let key = SymmetricKey(size: .bits256)
++        guard let envelope = try? SealedEnvelope.seal(Data(marker.utf8), key: key, purpose: "a") else {
++            return expect(false, "sealing succeeds")
++        }
++        func opens(_ data: Data, key: SymmetricKey = key, purpose: String = "a") -> SealedEnvelope.Failure? {
++            do {
++                _ = try SealedEnvelope.open(data, key: key, purpose: purpose)
++                return nil
++            } catch {
++                return error
++            }
++        }
++        expect(opens(envelope, key: SymmetricKey(size: .bits256)) == .authentication, "a wrong key fails")
++        expect(opens(envelope, purpose: "b") == .authentication, "another store's purpose fails")
++        expect(opens(envelope.prefix(20)) == .truncated, "a truncated file fails")
++        var magic = envelope
++        magic[0] ^= 0xFF
++        expect(opens(magic) == .unknownFormat, "an edited magic fails")
++        var version = envelope
++        version[4] = 2
++        expect(opens(version) == .unsupportedVersion, "an unknown version fails")
++        let spots = [(8, "nonce"), (envelope.count / 2 + 9, "ciphertext"), (envelope.count - 1, "tag")]
++        for (index, name) in spots {
++            var flipped = envelope
++            flipped[index] ^= 0x01
++            expect(opens(flipped) == .authentication, "a flipped bit in the \(name) fails")
++        }
++    }
++
++    // MARK: - SealedFile
++
++    static func makeRoot() -> URL {
++        let root = FileManager.default.temporaryDirectory
++            .appendingPathComponent("sealed-storage-test-\(UUID().uuidString)", isDirectory: true)
++        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
++        roots.append(root)
++        return root
++    }
++
++    static func newAccount() -> UUID {
++        let account = UUID()
++        accounts.append(account)
++        return account
++    }
++
++    static func makeFile(_ root: URL, legacy: String? = nil, account: UUID? = nil) -> SealedFile {
++        SealedFile(
++            name: "store.enc", legacyName: legacy, account: account ?? newAccount(), directory: root,
++            keychain: keychain)
++    }
++
++    /// `try?` flattens "nothing stored" into "failed"; this keeps the two apart.
++    static func read(_ file: SealedFile) -> Data?? {
++        do {
++            return .some(try file.read())
++        } catch {
++            return nil
++        }
++    }
++
++    static func hasKey(_ account: UUID) -> Bool? {
++        do {
++            return try keychain.secret(for: account) != nil
++        } catch {
++            return nil
++        }
++    }
++
++    static func listing(_ root: URL) -> [String] {
++        ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []).sorted()
++    }
++
++    static func containsMarker(_ root: URL) -> Bool {
++        listing(root).contains { name in
++            let data = (try? Data(contentsOf: root.appendingPathComponent(name))) ?? Data()
++            return ["SYNTHETIC", "synthetic", "MARKER", "marker"].contains {
++                data.range(of: Data($0.utf8)) != nil
++            }
++        }
++    }
++
++    static func writesOnlySealedPrivateFiles() {
++        let root = makeRoot()
++        let file = makeFile(root)
++        expect(read(file) == .some(nil), "an absent file reads as nothing stored")
++        let payload = Data(marker.utf8)
++        expect((try? file.write(payload)) != nil, "writes")
++        expect((try? file.write(payload)) != nil, "writes again")
++        expect(listing(root) == ["store.enc"], "no temporary file is left behind")
++        expect(!containsMarker(root), "the marker never reaches the disk in the clear")
++        let mode = (try? FileManager.default.attributesOfItem(atPath: file.url.path))?[.posixPermissions]
++        expect((mode as? NSNumber)?.intValue == 0o600, "the file is readable by its owner alone")
++        expect(failure { _ = try makeFile(root).read() } == .keyMissing, "another key cannot open it")
++        expect(read(file) == payload, "its own key reads it back")
++    }
++
++    static func refusesAMissingKeyOrACorruptFile() {
++        let root = makeRoot()
++        let account = newAccount()
++        let original = makeFile(root, account: account)
++        _ = try? original.write(Data(marker.utf8))
++        guard let sealed = try? Data(contentsOf: original.url) else {
++            return expect(false, "sealed file exists")
++        }
++        var corrupted = sealed
++        corrupted[corrupted.count - 3] ^= 0x10
++        try? corrupted.write(to: original.url)
++        let reader = makeFile(root, account: account)
++        expect(failure { _ = try reader.read() } == .corrupted(.authentication), "tampering is detected")
++        expect(failure { try reader.write(Data("new".utf8)) } == .blocked, "and blocks every write")
++        expect((try? Data(contentsOf: original.url)) == corrupted, "the file is left as it was")
++
++        try? sealed.write(to: original.url)
++        try? keychain.removeSecret(for: account)
++        let keyless = makeFile(root, account: account)
++        expect(failure { _ = try keyless.read() } == .keyMissing, "a lost key is reported, not replaced")
++        expect(hasKey(account) == false, "no new key was created")
++        expect(failure { try keyless.write(Data("new".utf8)) } == .blocked, "and nothing overwrites it")
++        expect(failure { try makeFile(root, account: account).write(Data("x".utf8)) } == .keyMissing,
++            "even a fresh handle refuses to reseal under a new key")
++        expect((try? Data(contentsOf: original.url)) == sealed, "the sealed file survives untouched")
++        let restoredKey = makeFile(root, account: account)
++        _ = try? restoredKey.erase()
++        try? sealed.write(to: original.url)
++        expect(failure { try keyless.write(Data("x".utf8)) } == .blocked, "still blocked until a read works")
++        try? FileManager.default.removeItem(at: original.url)
++        expect(read(keyless) == .some(nil), "a read that works again lifts the block")
++        expect(failure { try keyless.write(Data("x".utf8)) } == nil, "and writes resume")
++    }
++
++    static func migratesLegacyFilesOnce() {
++        let root = makeRoot()
++        let legacyURL = root.appendingPathComponent("store.json")
++        let legacy = Data("[\"\(marker)\"]".utf8)
++        try? legacy.write(to: legacyURL)
++        let account = newAccount()
++        let file = makeFile(root, legacy: "store.json", account: account)
++        expect(read(file) == legacy, "the legacy content is read")
++        expect(listing(root) == ["store.enc"], "the plain file is gone once the sealed one verifies")
++        expect(!containsMarker(root), "nothing readable is left on disk")
++        let again = makeFile(root, legacy: "store.json", account: account)
++        expect(read(again) == legacy, "a second run is a no-op")
++        expect(listing(root) == ["store.enc"], "and creates no copy")
++    }
++
++    static func keepsTheNewerCopyWhenBothExist() {
++        let root = makeRoot()
++        let account = newAccount()
++        let legacyURL = root.appendingPathComponent("store.json")
++        let file = makeFile(root, legacy: "store.json", account: account)
++        _ = try? file.write(Data("sealed".utf8))
++        try? Data("older plain".utf8).write(to: legacyURL)
++        let past = Date(timeIntervalSinceNow: -3600)
++        try? FileManager.default.setAttributes([.modificationDate: past], ofItemAtPath: legacyURL.path)
++        expect(read(makeFile(root, legacy: "store.json", account: account)) == Data("sealed".utf8),
++            "a valid sealed file is never overwritten by an older plain copy")
++        expect(listing(root) == ["store.enc"], "the older plain copy is removed")
++        try? Data("newer plain".utf8).write(to: legacyURL)
++        try? FileManager.default.setAttributes(
++            [.modificationDate: Date(timeIntervalSinceNow: 3600)], ofItemAtPath: legacyURL.path)
++        expect(read(makeFile(root, legacy: "store.json", account: account)) == Data("newer plain".utf8),
++            "a plain copy written since, by the official build, is sealed in")
++        expect(listing(root) == ["store.enc"], "and removed")
++    }
++
++    static func erasesOneStoreAndItsKeyOnly() {
++        let root = makeRoot()
++        let historyAccount = newAccount()
++        let calculatorAccount = newAccount()
++        let history = SealedFile(
++            name: "history.enc", account: historyAccount, directory: root, keychain: keychain)
++        let calculator = SealedFile(
++            name: "calculator.enc", account: calculatorAccount, directory: root, keychain: keychain)
++        _ = try? history.write(Data("h".utf8))
++        _ = try? calculator.write(Data("c".utf8))
++        let oldCopy = try? Data(contentsOf: history.url)
++        expect((try? history.erase()) != nil, "erasing succeeds")
++        expect(!FileManager.default.fileExists(atPath: history.url.path), "the file is deleted")
++        expect(hasKey(historyAccount) == false, "its key is deleted")
++        expect(read(calculator) == Data("c".utf8), "another store still opens with its own key")
++        if let oldCopy {
++            try? oldCopy.write(to: history.url)
++            expect(failure { _ = try history.read() } == .keyMissing, "a copy kept elsewhere is now useless")
++            try? FileManager.default.removeItem(at: history.url)
++        }
++        expect((try? history.erase()) != nil, "erasing again is harmless")
++        expect((try? history.write(Data("fresh".utf8))) != nil, "a new key starts afresh after erase")
++    }
++
++    static func boundsTheFileSize() {
++        let root = makeRoot()
++        let file = makeFile(root)
++        let huge = root.appendingPathComponent("store.enc")
++        FileManager.default.createFile(atPath: huge.path, contents: nil)
++        if let handle = try? FileHandle(forWritingTo: huge) {
++            try? handle.truncate(atOffset: UInt64(SealedFile.sizeLimit + 1))
++            try? handle.close()
++        }
++        expect(failure { _ = try file.read() } == .tooLarge, "an oversized file is refused unread")
++    }
++
++    static func reportsAFailedWrite() {
++        let root = makeRoot()
++        let file = makeFile(root)
++        try? FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
++        if case .io = failure({ try file.write(Data(marker.utf8)) }) {
++            expect(true, "a read-only folder fails the write")
++        } else {
++            expect(false, "a read-only folder fails the write")
++        }
++        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
++        expect(listing(root).isEmpty, "and leaves no partial or plain file")
++    }
++
++    static func failure(_ body: () throws -> Void) -> SealedFile.Failure? {
++        do {
++            try body()
++            return nil
++        } catch let failure as SealedFile.Failure {
++            return failure
++        } catch {
++            return .io(-1)
++        }
++    }
++
++    // MARK: - The three stores
++
++    static func sealsTheLauncherHistory() {
++        let root = makeRoot()
++        let file = SealedFile(
++            name: "command-input-history.enc", account: newAccount(), directory: root, keychain: keychain)
++        var history = LauncherHistory()
++        history.record(marker, at: Date())
++        expect((try? file.write(history.encoded())) != nil, "the history writes")
++        expect(!containsMarker(root), "no entry is readable on disk")
++        let reread = read(file).flatMap { $0 }.flatMap { try? LauncherHistory.decoded(from: $0) }
++        expect(reread == history, "and it comes back intact after a restart")
++    }
++
++    static func sealsTheRankingTable() async {
++        let root = makeRoot()
++        let file = SealedFile(
++            name: "launcher-ranking.enc", legacyName: "launcher-ranking.json", account: newAccount(),
++            directory: root, keychain: keychain)
++        let legacy = ["app:/Applications/Safari.app": LauncherVisit(
++            anchor: Date(timeIntervalSinceNow: 86_400), openedAt: Date(), searchTerms: ["synthetic"])]
++        try? JSONEncoder().encode(legacy).write(to: root.appendingPathComponent("launcher-ranking.json"))
++        let unused = root.appendingPathComponent("unused.json")
++        let store = LauncherRankingStore(fileURL: unused, persistence: file.loadAndSave)
++        expect(store.visits.first?.value.searchTerms == ["synthetic"], "learned terms migrate in")
++        store.visit(itemKey: "app:/Applications/Notes.app", query: marker)
++        await store.flush()
++        expect(listing(root) == ["launcher-ranking.enc"], "only the sealed table is on disk")
++        expect(!containsMarker(root), "learned search terms are not readable on disk")
++        let reloaded = LauncherRankingStore(fileURL: unused, persistence: file.loadAndSave)
++        let terms = reloaded.visits["app:/Applications/Notes.app"]?.searchTerms ?? []
++        expect(terms == [LauncherRankingStore.normalize(marker)], "and ranking still learns from them")
++    }
++
++    static func sealsCalculatorHistory() {
++        let root = makeRoot()
++        let file = SealedFile(
++            name: "calculator-history.enc", legacyName: "calculator-history.json", account: newAccount(),
++            directory: root, keychain: keychain)
++        let legacy = [CalcHistoryEntry(id: UUID(), expression: "1,5 * 2", result: "3", createdAt: Date())]
++        try? JSONEncoder().encode(legacy).write(to: root.appendingPathComponent("calculator-history.json"))
++        let store = CalculatorHistoryStore(file: file)
++        expect(store.entries.map(\.expression) == ["1,5 * 2"], "past calculations migrate in")
++        store.record(expression: "\(marker) + 1", result: "42")
++        expect(listing(root) == ["calculator-history.enc"], "only the sealed history is on disk")
++        expect(!containsMarker(root), "expressions are not readable on disk")
++        expect(CalculatorHistoryStore(file: file).entries.count == 2, "and they reload")
++    }
++
++    static func cleanUp() {
++        for root in roots { try? FileManager.default.removeItem(at: root) }
++        for account in accounts { try? keychain.removeSecret(for: account) }
++    }
++}
