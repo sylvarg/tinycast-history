@@ -199,6 +199,8 @@ final class AppCore {
     @ObservationIgnored private(set) lazy var emojiCoordinator = EmojiCoordinator(
         frequentEmoji: frequentEmoji, settings: settings, windowController: windowController,
         paletteCoordinator: paletteCoordinator)
+    @ObservationIgnored private(set) lazy var launcherHistoryCoordinator =
+        LauncherHistoryCoordinator(palette: palette, core: self)
     @ObservationIgnored private(set) lazy var calculatorCoordinator = CalculatorCoordinator(
         calcHistory: calcHistory, paletteCoordinator: paletteCoordinator, core: self)
     @ObservationIgnored private(set) lazy var calendarCoordinator = CalendarCoordinator(
@@ -292,6 +294,7 @@ final class AppCore {
             }
 
             appIndex.start(settings: settings)
+            launcherHistoryCoordinator.start()
             clipboardCoordinator.applyEnabled()
             extensions.start(appIndex: appIndex, coordinator: extensionCoordinator)
             extensionCoordinator.applyEnabled()
@@ -573,6 +576,7 @@ final class AppCore {
     }
 
     func prepareForTermination() {
+        launcherHistoryCoordinator.prepareForTermination()
         if settings.dictationEnabled { dictationCoordinator.prepareForTermination() }
         settingsFile?.flush()
         clipboardTextIndexer?.stop()
@@ -936,9 +940,12 @@ final class AppCore {
         tone: DialogTone = .danger, confirmRole: DialogAction.Role = .destructive,
         dismissTitle: String = String(localized: "Cancel")
     ) async -> Bool {
-        await dialogs.confirm(
+        launcherHistoryCoordinator.confirmationWillBegin()
+        let confirmed = await dialogs.confirm(
             title: title, message: message, symbol: symbol, tone: tone, confirmTitle: confirmTitle,
             confirmRole: confirmRole, dismissTitle: dismissTitle)
+        launcherHistoryCoordinator.confirmationDidEnd(confirmed: confirmed)
+        return confirmed
     }
 
     /// A question with more than two answers; the returned index is into `options`.
@@ -976,7 +983,10 @@ final class AppCore {
     }
 
     func pickVolume(current: Float32) async -> Float32? {
-        await dialogs.pickVolume(current: current)
+        launcherHistoryCoordinator.confirmationWillBegin()
+        let picked = await dialogs.pickVolume(current: current)
+        launcherHistoryCoordinator.confirmationDidEnd(confirmed: picked != nil)
+        return picked
     }
 
     func fillSnippetArguments(
