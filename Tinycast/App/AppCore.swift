@@ -253,7 +253,7 @@ final class AppCore {
     private var relaunchRequested = false
 
     private init() {
-        let launcherRanking = LauncherRankingStore()
+        let launcherRanking = LauncherRankingStore(persistence: SealedFile.launcherRanking.loadAndSave)
         let settings = AppSettings()
         let chatHistory = ChatHistoryStore(directory: AppPaths.applicationSupport())
         self.launcherRanking = launcherRanking
