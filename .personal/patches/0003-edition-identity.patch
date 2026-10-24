@@ -1,0 +1,132 @@
+diff --git a/Tinycast/Features/Updates/Model/AppVersion.swift b/Tinycast/Features/Updates/Model/AppVersion.swift
+index 5107d0fd16514a93b1bb70b54d488b7ce1a0af9f..a5c4497b89e24736a4d5cde38de39d4584aa80f9 100644
+--- a/Tinycast/Features/Updates/Model/AppVersion.swift
++++ b/Tinycast/Features/Updates/Model/AppVersion.swift
+@@ -7,6 +7,8 @@ struct AppVersion: Comparable, Hashable, Sendable, CustomStringConvertible {
+     let patch: Int
+     /// Nil on a stable release, which outranks every prerelease of the same triple.
+     let beta: Int?
++    /// The personal edition's `-h.N` rebuild of a release, ranked above the bare release.
++    let revision: Int?
+ 
+     init?(_ text: String) {
+         var body = Substring(text.trimmingCharacters(in: .whitespacesAndNewlines))
+@@ -24,11 +26,14 @@ struct AppVersion: Comparable, Hashable, Sendable, CustomStringConvertible {
+         if halves.count == 2 {
+             // `beta` is the only prerelease channel that ships, so anything else is unreadable.
+             let suffix = halves[1].split(separator: ".", omittingEmptySubsequences: false)
+-            guard suffix.count == 2, suffix[0] == "beta", let count = Self.number(suffix[1])
++            guard suffix.count == 2, suffix[0] == "beta" || suffix[0] == "h",
++                let count = Self.number(suffix[1])
+             else { return nil }
+-            beta = count
++            beta = suffix[0] == "beta" ? count : nil
++            revision = suffix[0] == "h" ? count : nil
+         } else {
+             beta = nil
++            revision = nil
+         }
+         self.major = major
+         self.minor = minor
+@@ -39,13 +44,14 @@ struct AppVersion: Comparable, Hashable, Sendable, CustomStringConvertible {
+ 
+     var description: String {
+         let triple = "\(major).\(minor).\(patch)"
+-        return beta.map { "\(triple)-beta.\($0)" } ?? triple
++        return beta.map { "\(triple)-beta.\($0)" } ?? revision.map { "\(triple)-h.\($0)" } ?? triple
+     }
+ 
+     static func < (lhs: Self, rhs: Self) -> Bool {
+         if lhs.major != rhs.major { return lhs.major < rhs.major }
+         if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
+         if lhs.patch != rhs.patch { return lhs.patch < rhs.patch }
++        if lhs.beta == nil, rhs.beta == nil { return (lhs.revision ?? 0) < (rhs.revision ?? 0) }
+         switch (lhs.beta, rhs.beta) {
+         case (nil, nil): return false
+         // A prerelease leads to its release, so it sorts below one and never above it.
+diff --git a/Tinycast/Features/Updates/Model/ReleaseFeed.swift b/Tinycast/Features/Updates/Model/ReleaseFeed.swift
+index 4773a89a23bb63b1ca271f9c5f78da617764d440..f26e9207f694ad71b00fba6d860213d7c6543f70 100644
+--- a/Tinycast/Features/Updates/Model/ReleaseFeed.swift
++++ b/Tinycast/Features/Updates/Model/ReleaseFeed.swift
+@@ -12,7 +12,7 @@ struct AvailableRelease: Codable, Hashable, Sendable {
+ /// Nothing throws: an unusable body means nothing to install, and the pump retries.
+ enum ReleaseFeed {
+     /// Where releases come from, and what every `@handle` and `#304` in their notes points at.
+-    static let repository = "abue-ammar/tinycast"
++    static let repository = "sylvarg/tinycast-history"
+ 
+     /// The only artifact with an x86_64 slice, so the only one an Intel Mac can install.
+     private static let universalMarker = "-Universal-"
+diff --git a/Tinycast/Features/Updates/Service/BundleSignature.swift b/Tinycast/Features/Updates/Service/BundleSignature.swift
+index 5bc657ce41be0301e4ca5c8f291d127e7243f2ed..b5ca91626155be6641af46783e2a8d146c9b2e07 100644
+--- a/Tinycast/Features/Updates/Service/BundleSignature.swift
++++ b/Tinycast/Features/Updates/Service/BundleSignature.swift
+@@ -1,7 +1,7 @@
+ import Foundation
+ import Security
+ 
+-/// Proves a staged bundle is ours: the Developer ID chain, or the leaf a pre-switch copy pins.
++/// Proves a staged bundle is ours: the personal edition trusts its own leaf, never upstream's team.
+ enum BundleSignature {
+     /// The team, not the certificate — a leaf is reissued on renewal and on a rename.
+     static let developerID = """
+@@ -19,7 +19,6 @@ enum BundleSignature {
+         // An unsealed bundle can claim any identity, and a nested helper is where one hides.
+         let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode)
+         guard SecStaticCodeCheckValidity(staticCode, flags, nil) == errSecSuccess else { return false }
+-        if satisfiesDeveloperID(staticCode, flags: flags) { return true }
+         // A copy installed before the switch knows only the leaf it was itself signed with.
+         guard let running = runningLeaf(), let candidate = leaf(of: staticCode) else { return false }
+         return running == candidate
+diff --git a/Tinycast/Windows/About/AboutView.swift b/Tinycast/Windows/About/AboutView.swift
+index 3c50b734043cfa2a82f52b289d9a037d0add3187..c11eb36bc1ad6c064a3f716d94ad0b4dffdf874a 100644
+--- a/Tinycast/Windows/About/AboutView.swift
++++ b/Tinycast/Windows/About/AboutView.swift
+@@ -33,6 +33,7 @@ struct AboutView: View {
+                         .padding(.vertical, Theme.Spacing.lg)
+                 }
+                 .settingsAnchor(.aboutAbout)
++                PersonalEditionSection()
+                 links
+                 support
+             }
+diff --git a/Tinycast/Windows/About/PersonalEditionSection.swift b/Tinycast/Windows/About/PersonalEditionSection.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..5702b73b94f0ee2fe27873f100a8260cee802d89
+--- /dev/null
++++ b/Tinycast/Windows/About/PersonalEditionSection.swift
+@@ -0,0 +1,34 @@
++import SwiftUI
++
++/// The personal edition in About: what it adds, the official release it rebuilds, where it lives.
++struct PersonalEditionSection: View {
++    static let repository = URL(string: "https://github.com/sylvarg/tinycast-history")!
++    static let upstream = URL(string: "https://github.com/abue-ammar/tinycast")!
++
++    private static let version: AppVersion? = {
++        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
++        return short.flatMap(AppVersion.init)
++    }()
++
++    var body: some View {
++        Section {
++            LabeledContent(text("Edition"), value: text("Personal edition with history"))
++            LabeledContent(
++                text("Official base version"),
++                value: Self.version.map { "\($0.major).\($0.minor).\($0.patch)" } ?? "—")
++            LabeledContent(
++                text("Personal revision"), value: Self.version?.revision.map { "h.\($0)" } ?? "—")
++            Link(text("Source code and releases"), destination: Self.repository)
++            Link(
++                text("Report a problem with this edition"),
++                destination: Self.repository.appending(path: "issues"))
++            Link(text("Original project by Abue Ammar"), destination: Self.upstream)
++        } header: {
++            Text(text("Personal edition with history"))
++        }
++    }
++
++    private func text(_ key: String.LocalizationValue) -> String {
++        String(localized: key, table: "PersonalEdition")
++    }
++}

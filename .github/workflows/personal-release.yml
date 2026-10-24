@@ -1,0 +1,134 @@
+name: "Personal · release"
+
+# Each official stable release is rebuilt from its exact tag with .personal/patches, tested, signed
+# with this edition's own identity and published here as v<official>-h.<revision>: the version the
+# in-app updater reads. A change to the patches publishes the next revision of the same base.
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Official stable tag to build, e.g. v0.12.1; empty = the latest stable"
+        type: string
+        required: false
+
+concurrency:
+  group: personal-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  UPSTREAM_REPO: abue-ammar/tinycast
+  UPSTREAM: https://github.com/abue-ammar/tinycast.git
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      patches: ${{ steps.plan.outputs.patches }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          HAS_PERSONAL_PUSH_TOKEN: ${{ secrets.PERSONAL_PUSH_TOKEN != '' }}
+          HAS_SIGNING_P12_BASE64: ${{ secrets.SIGNING_P12_BASE64 != '' }}
+          HAS_SIGNING_P12_PASSWORD: ${{ secrets.SIGNING_P12_PASSWORD != '' }}
+        run: |
+          # Releasing needs the signing identity and the push token; until then, name what is missing.
+          missing=$(env | sed -n 's/^HAS_\(.*\)=false$/\1/p' | sort | paste -sd' ' -)
+          if [ -n "$missing" ]; then
+            echo "::warning::repository secrets not set: $missing (see .personal/SIGNING.md); nothing is released"
+            echo "tag=" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          .personal/release-plan.sh "$INPUT_TAG" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: check
+    if: needs.check.outputs.tag != ''
+    runs-on: macos-26
+    timeout-minutes: 150
+    permissions:
+      contents: write
+      issues: write
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      VERSION: ${{ needs.check.outputs.version }}
+      PATCHES: ${{ needs.check.outputs.patches }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.PERSONAL_PUSH_TOKEN }}
+
+      - name: Select Xcode 26
+        run: |
+          XCODE_PATH="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n1)"
+          [ -n "$XCODE_PATH" ] || { ls /Applications | grep -i xcode; exit 1; }
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Tools
+        run: |
+          command -v xcodegen > /dev/null || brew install --quiet xcodegen
+          command -v swiftlint > /dev/null || brew install --quiet swiftlint
+
+      - name: Apply the patches to the official tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          MAIN=$(git rev-parse HEAD)
+          git fetch --no-tags "$UPSTREAM" "refs/tags/$TAG:refs/upstream-tags/$TAG"
+          UP=$(git rev-parse "refs/upstream-tags/$TAG^{commit}")
+          KEEP="$RUNNER_TEMP/keep"; mkdir -p "$KEEP/wf"
+          cp -R .personal "$KEEP/"; cp .github/workflows/personal-*.yml "$KEEP/wf/"
+          git checkout -q --detach "$UP"
+          rm -rf .personal; cp -R "$KEEP/.personal" .; mkdir -p .github/workflows; cp "$KEEP"/wf/* .github/workflows/
+          echo "$UP" > .personal/UPSTREAM
+          PERSONAL_COMMIT=1 .personal/apply.sh
+          git add -A
+          git commit -q -m "personal: Tinycast $VERSION (official $TAG ${UP:0:7})" \
+            -m "Built by personal-release.yml from main ${MAIN:0:7}; each patch is its own commit below."
+          { echo "UP=$UP"; echo "MAIN=$MAIN"; echo "SOURCE=$(git rev-parse HEAD)"; } >> "$GITHUB_ENV"
+
+      - name: Build and test
+        run: .personal/gate.sh "$UP"
+
+      - name: Build, sign and package
+        env:
+          P12_BASE64: ${{ secrets.SIGNING_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.SIGNING_P12_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
+        run: .personal/build-release.sh
+
+      # The tag is created once and never moved; a run that fails later leaves only a draft.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .personal/publish-release.sh
+
+      - name: Close blocked issue
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .personal/report.sh close release
+
+      - name: Report blocked release
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CAUSE=$(cat "$RUNNER_TEMP/gate-cause.txt" 2>/dev/null || echo "release-step-failed")
+          .personal/report.sh open release "Release blocked: $TAG + main $(git rev-parse --short=7 origin/main)" \
+            "$RUNNER_TEMP/gate-report.md" "$CAUSE"

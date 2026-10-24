@@ -1,0 +1,1709 @@
+diff --git a/Tinycast/App/AppCore.swift b/Tinycast/App/AppCore.swift
+index f4b0ef900a9040211a16569db38e34a2fba0b893..f152d7510524fb59dc36d11a8e2d0d92d48f20ea 100644
+--- a/Tinycast/App/AppCore.swift
++++ b/Tinycast/App/AppCore.swift
+@@ -199,6 +199,8 @@ final class AppCore {
+     @ObservationIgnored private(set) lazy var emojiCoordinator = EmojiCoordinator(
+         frequentEmoji: frequentEmoji, settings: settings, windowController: windowController,
+         paletteCoordinator: paletteCoordinator)
++    @ObservationIgnored private(set) lazy var launcherHistoryCoordinator =
++        LauncherHistoryCoordinator(palette: palette, core: self)
+     @ObservationIgnored private(set) lazy var calculatorCoordinator = CalculatorCoordinator(
+         calcHistory: calcHistory, paletteCoordinator: paletteCoordinator, core: self)
+     @ObservationIgnored private(set) lazy var calendarCoordinator = CalendarCoordinator(
+@@ -292,6 +294,7 @@ final class AppCore {
+             }
+ 
+             appIndex.start(settings: settings)
++            launcherHistoryCoordinator.start()
+             clipboardCoordinator.applyEnabled()
+             extensions.start(appIndex: appIndex, coordinator: extensionCoordinator)
+             extensionCoordinator.applyEnabled()
+@@ -573,6 +576,7 @@ final class AppCore {
+     }
+ 
+     func prepareForTermination() {
++        launcherHistoryCoordinator.prepareForTermination()
+         if settings.dictationEnabled { dictationCoordinator.prepareForTermination() }
+         settingsFile?.flush()
+         clipboardTextIndexer?.stop()
+@@ -936,9 +940,12 @@ final class AppCore {
+         tone: DialogTone = .danger, confirmRole: DialogAction.Role = .destructive,
+         dismissTitle: String = String(localized: "Cancel")
+     ) async -> Bool {
+-        await dialogs.confirm(
++        launcherHistoryCoordinator.confirmationWillBegin()
++        let confirmed = await dialogs.confirm(
+             title: title, message: message, symbol: symbol, tone: tone, confirmTitle: confirmTitle,
+             confirmRole: confirmRole, dismissTitle: dismissTitle)
++        launcherHistoryCoordinator.confirmationDidEnd(confirmed: confirmed)
++        return confirmed
+     }
+ 
+     /// A question with more than two answers; the returned index is into `options`.
+@@ -976,7 +983,10 @@ final class AppCore {
+     }
+ 
+     func pickVolume(current: Float32) async -> Float32? {
+-        await dialogs.pickVolume(current: current)
++        launcherHistoryCoordinator.confirmationWillBegin()
++        let picked = await dialogs.pickVolume(current: current)
++        launcherHistoryCoordinator.confirmationDidEnd(confirmed: picked != nil)
++        return picked
+     }
+ 
+     func fillSnippetArguments(
+diff --git a/Tinycast/Features/AI/UI/QuickAICoordinator.swift b/Tinycast/Features/AI/UI/QuickAICoordinator.swift
+index 6c069c8cfdd368d4c8ea2c1a0ed215c5a1443d9f..47090cfc6c7eef7302f900f0d04f928a71711440 100644
+--- a/Tinycast/Features/AI/UI/QuickAICoordinator.swift
++++ b/Tinycast/Features/AI/UI/QuickAICoordinator.swift
+@@ -42,6 +42,7 @@ final class QuickAICoordinator {
+             show()
+             return
+         }
++        core.launcherHistoryCoordinator.noteAction()
+         chat.startNewChat()
+         paletteCoordinator.showPalette(mode: .ai)
+         send(prompt)
+diff --git a/Tinycast/Features/Calculator/UI/CalculatorCoordinator.swift b/Tinycast/Features/Calculator/UI/CalculatorCoordinator.swift
+index 607f51d3e78a605c2348688796d98aa6b4bb75fb..07959a84ddd736c13d72e1eb3de2c275a93d8580 100644
+--- a/Tinycast/Features/Calculator/UI/CalculatorCoordinator.swift
++++ b/Tinycast/Features/Calculator/UI/CalculatorCoordinator.swift
+@@ -43,6 +43,7 @@ final class CalculatorCoordinator {
+         guard case .value(let display, let copyText) = result.payload, result.canChain,
+             !core.palette.isComposing
+         else { return false }
++        core.launcherHistoryCoordinator.noteAction()
+         calcHistory.record(expression: result.expression, result: display)
+         core.palette.rewriteQuery(format.localized(copyText))
+         return true
+@@ -50,6 +51,7 @@ final class CalculatorCoordinator {
+ 
+     func copyCalculationWithExpression(_ result: CalcResult) {
+         guard case .value(let display, let copyText) = result.payload else { return }
++        core.launcherHistoryCoordinator.noteAction()
+         calcHistory.record(expression: result.expression, result: display)
+         paletteCoordinator.hidePalette(restoreFocus: false)
+         let format = format
+diff --git a/Tinycast/Features/Launcher/Model/CommandID.swift b/Tinycast/Features/Launcher/Model/CommandID.swift
+index 01981ba0b2b5d35e62b7621110b9ed8443df3a71..d0b1e498a53e6672b1adf956c9cf695a9dd510b0 100644
+--- a/Tinycast/Features/Launcher/Model/CommandID.swift
++++ b/Tinycast/Features/Launcher/Model/CommandID.swift
+@@ -9,6 +9,7 @@ enum CommandID: String, CaseIterable, Sendable {
+     case translate = "command:translate"
+     case summarize = "command:summarize"
+     case calculatorHistory = "command:calculator-history"
++    case clearLauncherHistory = "command:clear-launcher-history"
+     case clipboardHistory = "command:clipboard-history"
+     case pasteSequentially = "command:paste-sequentially"
+     case searchEmoji = "command:search-emoji"
+@@ -62,6 +63,8 @@ enum CommandID: String, CaseIterable, Sendable {
+         case .translate: return BuiltInQuickAction.translate.titleResource
+         case .summarize: return BuiltInQuickAction.summarize.titleResource
+         case .calculatorHistory: return "Calculator History"
++        case .clearLauncherHistory:
++            return LocalizedStringResource("Clear Launcher History", table: "PersonalEdition")
+         case .clipboardHistory: return "Clipboard History"
+         case .pasteSequentially: return "Paste Sequentially"
+         case .searchEmoji: return "Search Emoji & Symbols"
+@@ -113,6 +116,7 @@ enum CommandID: String, CaseIterable, Sendable {
+         case .translate: return BuiltInQuickAction.translate.symbol
+         case .summarize: return BuiltInQuickAction.summarize.symbol
+         case .calculatorHistory: return "plus.forwardslash.minus"
++        case .clearLauncherHistory: return "clock.arrow.circlepath"
+         case .clipboardHistory: return "doc.on.clipboard"
+         case .pasteSequentially: return "list.bullet.clipboard"
+         case .searchEmoji: return "face.smiling"
+diff --git a/Tinycast/Features/Launcher/UI/LauncherCoordinator.swift b/Tinycast/Features/Launcher/UI/LauncherCoordinator.swift
+index cdc1cc6b9b3eb40854dd2f3230411cea355d4001..f8e46ff2000c16adec6e72ecb55ea192617c53e4 100644
+--- a/Tinycast/Features/Launcher/UI/LauncherCoordinator.swift
++++ b/Tinycast/Features/Launcher/UI/LauncherCoordinator.swift
+@@ -65,6 +65,8 @@ final class LauncherCoordinator {
+     func launch(
+         _ app: AppEntry, searchQuery: String? = nil, arguments: [String: String] = [:]
+     ) {
++        core.launcherHistoryCoordinator.noteLaunch(searchQuery: searchQuery)
++        defer { core.launcherHistoryCoordinator.launchDispatched() }
+         // A category word is no search for the row: learning it would rank the row under "s".
+         if !CommandCatalog.isQueryDriven(app) {
+             let term = searchQuery.flatMap {
+@@ -180,6 +182,8 @@ final class LauncherCoordinator {
+             core.quickActionCoordinator.run(.summarize)
+         case .calculatorHistory:
+             paletteCoordinator.togglePalette(mode: .calculatorHistory)
++        case .clearLauncherHistory:
++            Task { await core.launcherHistoryCoordinator.clearHistory() }
+         case .clipboardHistory:
+             paletteCoordinator.togglePalette(mode: .clipboard)
+         case .pasteSequentially:
+@@ -287,6 +291,7 @@ final class LauncherCoordinator {
+     }
+ 
+     func showInFinder(_ app: AppEntry) {
++        core.launcherHistoryCoordinator.noteAction()
+         paletteCoordinator.hidePalette(restoreFocus: false)
+         AppLauncher.showInFinder(app.url)
+     }
+@@ -294,6 +299,7 @@ final class LauncherCoordinator {
+     /// Focus is never handed back: the relaunch takes it, or the app that refused has it.
+     func restart(_ app: AppEntry) {
+         guard app.kind == .application, let bundleID = app.bundleID else { return }
++        core.launcherHistoryCoordinator.noteAction()
+         paletteCoordinator.hidePalette(restoreFocus: false)
+         Task { await AppLauncher.restart(bundleID: bundleID, url: app.url) }
+     }
+@@ -306,6 +312,7 @@ final class LauncherCoordinator {
+             windowController.previousApp?.bundleURL?.resolvingSymlinksInPath().standardizedFileURL.path
+             == app.id
+         guard AppLauncher.quit(bundleID: bundleID, url: app.url, force: force) else { return }
++        core.launcherHistoryCoordinator.noteAction()
+         paletteCoordinator.hidePalette(restoreFocus: !quittingPreviousApp)
+     }
+ }
+diff --git a/Tinycast/Features/Launcher/UI/LauncherScreen.swift b/Tinycast/Features/Launcher/UI/LauncherScreen.swift
+index a39c6c4a20a3431fc1c098ab59922cc842259364..cbd009ddd2a78831c4600b71d78a1b9c3defd15f 100644
+--- a/Tinycast/Features/Launcher/UI/LauncherScreen.swift
++++ b/Tinycast/Features/Launcher/UI/LauncherScreen.swift
+@@ -265,6 +265,7 @@ struct LauncherScreen: PaletteScreen {
+     }
+ 
+     func activate(at selection: Int) {
++        if hasPrimaryAction(at: selection) { core.launcherHistoryCoordinator.noteAction() }
+         switch row(at: selection) {
+         // Error cards no-op — copyCalculatorResult only acts on value payloads.
+         case .calc(let result): core.calculatorCoordinator.copyCalculatorResult(result)
+@@ -524,6 +525,8 @@ struct LauncherScreen: PaletteScreen {
+             files: fileSection,
+             fallbacks: fallbackSection
+         )
++        .launcherHistory(
++            core.launcherHistoryCoordinator, palette: vm, resultShown: calc?.isActionable ?? (color != nil))
+     }
+ 
+     private var fileSection: LauncherList.FileSection? {
+diff --git a/Tinycast/Features/LauncherHistory/Model/LauncherHistory.swift b/Tinycast/Features/LauncherHistory/Model/LauncherHistory.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..b82942e7374d80aca0d10f79eedb18130dd3f24a
+--- /dev/null
++++ b/Tinycast/Features/LauncherHistory/Model/LauncherHistory.swift
+@@ -0,0 +1,49 @@
++import Foundation
++
++/// One validated launcher query, exactly as it was typed.
++struct LauncherHistoryEntry: Codable, Hashable, Sendable, Identifiable {
++    let id: UUID
++    let text: String
++    var lastValidatedAt: Date
++}
++
++/// The launcher's validated queries, newest first, each text at most once.
++struct LauncherHistory: Codable, Equatable, Sendable {
++    static let capacity = 100
++
++    private(set) var entries: [LauncherHistoryEntry]
++
++    init(entries: [LauncherHistoryEntry] = []) {
++        self.entries = Array(entries.prefix(Self.capacity))
++    }
++
++    var texts: [String] { entries.map(\.text) }
++
++    /// A text validated before moves to the front with its id; false when there is nothing to keep.
++    @discardableResult
++    mutating func record(_ text: String, at date: Date, makeID: () -> UUID = UUID.init) -> Bool {
++        guard Self.isRecordable(text) else { return false }
++        if let index = entries.firstIndex(where: { $0.text == text }) {
++            var entry = entries.remove(at: index)
++            entry.lastValidatedAt = date
++            entries.insert(entry, at: 0)
++        } else {
++            entries.insert(LauncherHistoryEntry(id: makeID(), text: text, lastValidatedAt: date), at: 0)
++            if entries.count > Self.capacity { entries.removeLast(entries.count - Self.capacity) }
++        }
++        return true
++    }
++
++    /// Only emptiness is judged on a trimmed copy; the stored text keeps every space it had.
++    static func isRecordable(_ text: String) -> Bool {
++        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
++    }
++
++    func encoded() throws -> Data {
++        try JSONEncoder().encode(self)
++    }
++
++    static func decoded(from data: Data) throws -> LauncherHistory {
++        try JSONDecoder().decode(LauncherHistory.self, from: data)
++    }
++}
+diff --git a/Tinycast/Features/LauncherHistory/Model/LauncherHistorySession.swift b/Tinycast/Features/LauncherHistory/Model/LauncherHistorySession.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..9ccc2698bddc1e9bbc19ace159fb1c6a39b6ab85
+--- /dev/null
++++ b/Tinycast/Features/LauncherHistory/Model/LauncherHistorySession.swift
+@@ -0,0 +1,184 @@
++import Foundation
++
++/// The history's rules as a value: each event returns the texts to record, and touches nothing.
++struct LauncherHistorySession: Equatable {
++    /// Who put the current query in the field.
++    enum Origin: Equatable {
++        case typed
++        /// ↑ wrote it from the history; showing its results again records nothing.
++        case recalled
++        /// An action rewrote it, as ⌘↵ does with an answer; it was never typed.
++        case rewritten
++    }
++
++    /// A walk through a snapshot taken on the first ↑, so a write meanwhile cannot shift it.
++    struct Recall: Equatable {
++        let texts: [String]
++        var index: Int
++
++        var current: String { texts[index] }
++    }
++
++    enum UpArrow: Equatable {
++        /// Not a history key here: the launcher navigates its rows as it always has.
++        case ignore
++        /// Put this text in the field.
++        case write(String)
++        /// Already at the oldest entry: the key is consumed and nothing loops.
++        case stay
++    }
++
++    /// Long enough that a result flashing past mid-typing is not taken for one the user read.
++    static let presentationDwell: TimeInterval = 0.7
++
++    private(set) var query = ""
++    private(set) var origin = Origin.typed
++    private(set) var recall: Recall?
++    /// A result shown for typed text, recorded once read or once the palette leaves with it.
++    private(set) var shown: Shown?
++    /// The query whose result was already recorded, so showing it again is not a second event.
++    private(set) var settled: String?
++    /// The rewrite token last drawn; a new one means an action, not a keystroke, wrote the field.
++    private var seenRewriteToken: UUID?
++
++    struct Shown: Equatable {
++        let text: String
++        let since: Date
++    }
++
++    /// Recall starts only from a strictly empty field, and continues only while ↑ wrote the text.
++    mutating func upArrow(query current: String, history: [String]) -> UpArrow {
++        if current.isEmpty {
++            guard !history.isEmpty else { return .ignore }
++            recall = Recall(texts: history, index: 0)
++            return .write(history[0])
++        }
++        guard var recall, origin == .recalled, current == recall.current else { return .ignore }
++        guard recall.index + 1 < recall.texts.count else { return .stay }
++        recall.index += 1
++        self.recall = recall
++        return .write(recall.current)
++    }
++
++    /// The field as drawn, with `PaletteState.queryRewriteToken`, which an action's rewrite bumps.
++    mutating func observe(
++        query text: String, rewriteToken: UUID, resultShown: Bool, at now: Date
++    ) -> [String] {
++        // The compact bar mounts the list only once ↑ has filled the field, so no token was seen.
++        let rewritten = seenRewriteToken.map { $0 != rewriteToken } ?? (recall?.current == text)
++        seenRewriteToken = rewriteToken
++        return observe(query: text, rewritten: rewritten, resultShown: resultShown, at: now)
++    }
++
++    /// The field changed. `rewritten` says an action wrote it rather than a keystroke.
++    mutating func observe(
++        query text: String, rewritten: Bool, resultShown: Bool, at now: Date
++    ) -> [String] {
++        var recorded: [String] = []
++        if text != query {
++            recorded += settleShown(at: now, requiringDwell: true)
++            if rewritten, let recall, text == recall.current {
++                origin = .recalled
++            } else {
++                recall = nil
++                origin = rewritten ? .rewritten : .typed
++            }
++            query = text
++            settled = nil
++        }
++        if resultShown, origin == .typed, settled != text, LauncherHistory.isRecordable(text) {
++            if shown?.text != text { shown = Shown(text: text, since: now) }
++        } else if shown != nil {
++            recorded += settleShown(at: now, requiringDwell: true)
++        }
++        return recorded
++    }
++
++    /// The launcher left: a hidden palette had its result read, a swapped screen may not have.
++    mutating func left(at now: Date, paletteHidden: Bool) -> [String] {
++        recall = nil
++        seenRewriteToken = nil
++        return settleShown(at: now, requiringDwell: !paletteHidden)
++    }
++
++    /// An action was taken on the current query: the text it validates, or nil when there is none.
++    mutating func validate() -> String? {
++        guard origin != .rewritten, LauncherHistory.isRecordable(query) else { return nil }
++        // The result on screen and the action on it are one event, recorded once.
++        if shown?.text == query { shown = nil }
++        settled = query
++        return query
++    }
++
++    /// Locking the session forgets the walk and anything not yet recorded.
++    mutating func reset() {
++        self = LauncherHistorySession()
++    }
++
++    private mutating func settleShown(at now: Date, requiringDwell: Bool) -> [String] {
++        guard let shown else { return [] }
++        self.shown = nil
++        guard !requiringDwell || now.timeIntervalSince(shown.since) >= Self.presentationDwell else {
++            return []
++        }
++        settled = shown.text
++        return [shown.text]
++    }
++}
++
++/// The last validation, held a moment so a refused confirmation or a missing argument can undo it.
++struct LauncherHistoryUndo: Equatable {
++    /// An action's own dialog opens within moments; one later belongs to something else.
++    static let confirmationWindow: TimeInterval = 2
++
++    private(set) var pending: Pending?
++
++    struct Pending: Equatable {
++        let before: LauncherHistory
++        var after: LauncherHistory
++        var at: Date
++        var awaitingConfirmation = false
++    }
++
++    /// Validations of one gesture (a menu row, then the launch it runs) undo together.
++    mutating func recorded(before: LauncherHistory, after: LauncherHistory, at now: Date) {
++        if var pending, pending.after == before,
++            now.timeIntervalSince(pending.at) <= Self.confirmationWindow
++        {
++            pending.after = after
++            pending.at = now
++            self.pending = pending
++        } else {
++            pending = Pending(before: before, after: after, at: now)
++        }
++    }
++
++    mutating func confirmationBegan(at now: Date) {
++        guard var pending, !pending.awaitingConfirmation,
++            now.timeIntervalSince(pending.at) <= Self.confirmationWindow
++        else {
++            if pending?.awaitingConfirmation == false { pending = nil }
++            return
++        }
++        pending.awaitingConfirmation = true
++        self.pending = pending
++    }
++
++    /// The history to restore when the awaited confirmation was refused, if nothing moved since.
++    mutating func confirmationEnded(accepted: Bool, current: LauncherHistory) -> LauncherHistory? {
++        guard let pending, pending.awaitingConfirmation else { return nil }
++        self.pending = nil
++        return !accepted && current == pending.after ? pending.before : nil
++    }
++
++    /// The launch asked for its arguments instead of running.
++    mutating func withdraw(current: LauncherHistory, at now: Date) -> LauncherHistory? {
++        guard let pending, now.timeIntervalSince(pending.at) <= Self.confirmationWindow else { return nil }
++        self.pending = nil
++        return current == pending.after ? pending.before : nil
++    }
++
++    mutating func clear() {
++        pending = nil
++    }
++}
+diff --git a/Tinycast/Features/LauncherHistory/Service/LauncherHistoryStore.swift b/Tinycast/Features/LauncherHistory/Service/LauncherHistoryStore.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..429df4dec456e713947f1057e3fac9bb6aec70ec
+--- /dev/null
++++ b/Tinycast/Features/LauncherHistory/Service/LauncherHistoryStore.swift
+@@ -0,0 +1,67 @@
++import Foundation
++
++/// The sealed `command-input-history.enc`, loaded on first use and dropped again on lock.
++@MainActor
++final class LauncherHistoryStore {
++    enum State: Equatable {
++        case unloaded
++        case loaded(LauncherHistory)
++        case unavailable(SealedFile.Failure)
++    }
++
++    private let file: SealedFile
++    private(set) var state = State.unloaded
++
++    init(file: SealedFile = .launcherHistory) {
++        self.file = file
++    }
++
++    var isUnavailable: Bool {
++        if case .unavailable = state { return true }
++        return false
++    }
++
++    /// Nil while the file or its key cannot be read; nothing is written over it until it can.
++    func history() -> LauncherHistory? {
++        if case .unloaded = state { load() }
++        guard case .loaded(let history) = state else { return nil }
++        return history
++    }
++
++    @discardableResult
++    func save(_ history: LauncherHistory) -> Bool {
++        guard case .loaded = state else { return false }
++        do {
++            try file.write(history.encoded())
++        } catch let failure as SealedFile.Failure {
++            state = .unavailable(failure)
++            return false
++        } catch {
++            state = .unavailable(.corrupted(.unknownFormat))
++            return false
++        }
++        state = .loaded(history)
++        return true
++    }
++
++    /// Forgets the decrypted entries; the next use reads the file again.
++    func release() {
++        state = .unloaded
++    }
++
++    func erase() throws {
++        try file.erase()
++        state = .loaded(LauncherHistory())
++    }
++
++    private func load() {
++        do {
++            let data = try file.read()
++            state = .loaded(try data.map(LauncherHistory.decoded) ?? LauncherHistory())
++        } catch let failure as SealedFile.Failure {
++            state = .unavailable(failure)
++        } catch {
++            state = .unavailable(.corrupted(.unknownFormat))
++        }
++    }
++}
+diff --git a/Tinycast/Features/LauncherHistory/UI/LauncherHistoryCoordinator.swift b/Tinycast/Features/LauncherHistory/UI/LauncherHistoryCoordinator.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..850d39482ebe3e2d20fe933837b60ce1e8999e83
+--- /dev/null
++++ b/Tinycast/Features/LauncherHistory/UI/LauncherHistoryCoordinator.swift
+@@ -0,0 +1,202 @@
++import SwiftUI
++
++/// Owns the launcher's input history: ↑ recall, what counts as validated, and its sealed file.
++@MainActor
++final class LauncherHistoryCoordinator {
++    private let palette: PaletteState
++    private let store: LauncherHistoryStore
++    private let now: () -> Date
++    /// Dialogs and HUDs only, through the forwarders every feature uses.
++    private unowned let core: AppCore
++    private var session = LauncherHistorySession()
++    private var undo = LauncherHistoryUndo()
++    private var isLocked = false
++    /// Set between a palette launch and its return, the span its own argument request lands in.
++    private var isLaunchingFromPalette = false
++    private var observers: [NotificationToken] = []
++    /// One HUD per file and session, so a broken key does not report on every keystroke.
++    private var reportedFiles: Set<String> = []
++
++    init(
++        palette: PaletteState, core: AppCore, store: LauncherHistoryStore = LauncherHistoryStore(),
++        now: @escaping () -> Date = Date.init
++    ) {
++        self.palette = palette
++        self.core = core
++        self.store = store
++        self.now = now
++    }
++
++    func start() {
++        let distributed = DistributedNotificationCenter.default()
++        observers = [
++            observe(distributed, Notification.Name("com.apple.screenIsLocked")) { $0.lock() },
++            observe(distributed, Notification.Name("com.apple.screenIsUnlocked")) { $0.unlock() },
++            observe(NotificationCenter.default, SealedFile.didFailNotification) { coordinator in
++                coordinator.reportUnavailable()
++            }
++        ]
++        // The calculator and ranking stores read their files before anything could listen.
++        reportUnavailable()
++    }
++
++    // MARK: - Recall
++
++    /// ↑ in the launcher's own field; true when the key recalled, or sat at the oldest entry.
++    func recall(modifiers: EventModifiers, menuOpen: Bool, fieldFocused: Bool) -> Bool {
++        guard palette.mode == .launcher, fieldFocused, !menuOpen, !isLocked,
++            modifiers.isDisjoint(with: [.command, .option, .control, .shift]),
++            !palette.isComposing, !palette.isControlListOpen
++        else { return false }
++        let query = palette.query
++        guard query.isEmpty || session.recall != nil else { return false }
++        guard let history = store.history() else {
++            if query.isEmpty { reportUnavailable() }
++            return false
++        }
++        switch session.upArrow(query: query, history: history.texts) {
++        case .ignore: return false
++        case .stay: return true
++        case .write(let text):
++            palette.rewriteQuery(text)
++            return true
++        }
++    }
++
++    // MARK: - What the launcher shows
++
++    /// The field and its lead card as last drawn, from `LauncherHistoryObserver`.
++    func observe(query: String, rewriteToken: UUID, resultShown: Bool) {
++        record(
++            session.observe(query: query, rewriteToken: rewriteToken, resultShown: resultShown, at: now()))
++    }
++
++    /// A hidden palette also drops the decrypted entries; the next ↑ or record reads them again.
++    func launcherLeft(paletteHidden: Bool) {
++        record(session.left(at: now(), paletteHidden: paletteHidden))
++        if paletteHidden { store.release() }
++    }
++
++    // MARK: - Validation
++
++    /// An action ran on the launcher's query: a row, a menu item, a copy, an answer chained on.
++    func noteAction() {
++        guard palette.mode == .launcher, palette.isVisible, !isLocked,
++            let text = session.validate()
++        else { return }
++        record([text], undoable: true)
++    }
++
++    /// The launch funnel: only the palette passes a query, so a hotkey's launch records nothing.
++    func noteLaunch(searchQuery: String?) {
++        isLaunchingFromPalette = searchQuery != nil
++        if isLaunchingFromPalette { noteAction() }
++    }
++
++    /// After a launch dispatched: one that asked for its arguments instead did not run.
++    func launchDispatched() {
++        defer { isLaunchingFromPalette = false }
++        guard isLaunchingFromPalette, !isLocked, palette.pendingArgumentEntryID != nil,
++            let history = store.history(),
++            let restored = undo.withdraw(current: history, at: now())
++        else { return }
++        store.save(restored)
++    }
++
++    func confirmationWillBegin() {
++        undo.confirmationBegan(at: now())
++    }
++
++    func confirmationDidEnd(confirmed: Bool) {
++        guard !isLocked, let history = store.history(),
++            let restored = undo.confirmationEnded(accepted: confirmed, current: history)
++        else { return }
++        store.save(restored)
++    }
++
++    /// A result still on screen at quit was read; it is recorded as a hide would record it.
++    func prepareForTermination() {
++        if palette.isVisible, palette.mode == .launcher { launcherLeft(paletteHidden: true) }
++    }
++
++    // MARK: - Clear Launcher History
++
++    func clearHistory() async {
++        guard
++            await core.confirm(
++                title: String(localized: "Clear launcher history?", table: "PersonalEdition"),
++                message: String(
++                    localized: "Every recalled search goes, and its key with it. This can't be undone.",
++                    table: "PersonalEdition"),
++                symbol: CommandID.clearLauncherHistory.sfSymbol,
++                confirmTitle: String(localized: "Clear History", table: "PersonalEdition"))
++        else { return }
++        do {
++            try store.erase()
++        } catch {
++            await core.showNotice(
++                title: String(localized: "Couldn’t clear launcher history", table: "PersonalEdition"),
++                message: error.localizedDescription, symbol: "exclamationmark.triangle",
++                tone: .danger)
++            return
++        }
++        session.reset()
++        undo.clear()
++        reportedFiles.remove(SealedFile.launcherHistory.url.lastPathComponent)
++        core.showMessage(String(localized: "Launcher history cleared", table: "PersonalEdition"))
++    }
++
++    // MARK: - Private
++
++    private func record(_ texts: [String], undoable: Bool = false) {
++        guard !isLocked else { return }
++        guard !texts.isEmpty, let before = store.history() else {
++            if !texts.isEmpty { reportUnavailable() }
++            return
++        }
++        var after = before
++        let timestamp = now()
++        for text in texts { after.record(text, at: timestamp) }
++        guard after != before, store.save(after) else { return }
++        if undoable { undo.recorded(before: before, after: after, at: timestamp) }
++    }
++
++    /// Locking forgets the walk, the decrypted entries and any undo; unlocking reads them anew.
++    private func lock() {
++        isLocked = true
++        session.reset()
++        undo.clear()
++        store.release()
++    }
++
++    private func unlock() {
++        isLocked = false
++    }
++
++    private func reportUnavailable() {
++        let files: [SealedFile] = [.launcherHistory, .calculatorHistory, .launcherRanking]
++        let failed = files
++            .filter { $0.blocked || $0 === SealedFile.launcherHistory && store.isUnavailable }
++            .map(\.url.lastPathComponent)
++            .filter { !reportedFiles.contains($0) }
++        guard !failed.isEmpty else { return }
++        reportedFiles.formUnion(failed)
++        let names = failed.joined(separator: ", ")
++        core.showMessage(
++            String(localized: "Encrypted history unavailable: \(names)", table: "PersonalEdition"),
++            tone: .danger)
++    }
++
++    private func observe(
++        _ center: NotificationCenter, _ name: Notification.Name,
++        _ handler: @escaping @Sendable @MainActor (LauncherHistoryCoordinator) -> Void
++    ) -> NotificationToken {
++        NotificationToken(
++            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
++                MainActor.assumeIsolated {
++                    guard let self else { return }
++                    handler(self)
++                }
++            }, center: center)
++    }
++}
+diff --git a/Tinycast/Features/LauncherHistory/UI/LauncherHistoryObserver.swift b/Tinycast/Features/LauncherHistory/UI/LauncherHistoryObserver.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..16f8e881c2de0b8d2ce1f27572c368f259f05b7f
+--- /dev/null
++++ b/Tinycast/Features/LauncherHistory/UI/LauncherHistoryObserver.swift
+@@ -0,0 +1,40 @@
++import SwiftUI
++
++extension View {
++    /// Reports the launcher's field and lead card as drawn, which is what "shown" means here.
++    func launcherHistory(
++        _ coordinator: LauncherHistoryCoordinator, palette: PaletteState, resultShown: Bool
++    ) -> some View {
++        modifier(
++            LauncherHistoryObserver(coordinator: coordinator, palette: palette, resultShown: resultShown))
++    }
++}
++
++/// One change handler for the field, its rewrite token and the card, so they arrive in one event.
++private struct LauncherHistoryObserver: ViewModifier {
++    let coordinator: LauncherHistoryCoordinator
++    let palette: PaletteState
++    let resultShown: Bool
++
++    private struct Drawn: Equatable {
++        let query: String
++        let rewriteToken: UUID
++        let resultShown: Bool
++    }
++
++    func body(content: Content) -> some View {
++        content
++            .onChange(of: drawn, initial: true) { _, drawn in
++                coordinator.observe(
++                    query: drawn.query, rewriteToken: drawn.rewriteToken, resultShown: drawn.resultShown)
++            }
++            .onChange(of: palette.isVisible) { _, visible in
++                if !visible { coordinator.launcherLeft(paletteHidden: true) }
++            }
++            .onDisappear { coordinator.launcherLeft(paletteHidden: !palette.isVisible) }
++    }
++
++    private var drawn: Drawn {
++        Drawn(query: palette.query, rewriteToken: palette.queryRewriteToken, resultShown: resultShown)
++    }
++}
+diff --git a/Tinycast/Palette/RootPaletteView.swift b/Tinycast/Palette/RootPaletteView.swift
+index 6ae0d566be8207827f642b8ccfefa803824d52c5..3bbcc04a60752c1bb4ad52608f5962b4cb74697f 100644
+--- a/Tinycast/Palette/RootPaletteView.swift
++++ b/Tinycast/Palette/RootPaletteView.swift
+@@ -513,6 +513,9 @@ struct RootPaletteView: View {
+             .onKeyPress(keys: [.upArrow], phases: [.down, .repeat]) { press in
+                 if let reorder = movePinnedOrFavorite(-1, modifiers: press.modifiers) { return reorder }
+                 if vm.isControlListOpen { return .ignored }
++                if core.launcherHistoryCoordinator.recall(
++                    modifiers: press.modifiers, menuOpen: menuOpen,
++                    fieldFocused: searchFocused && argumentFocused == nil) { return .handled }
+                 if isCollapsed { return .ignored }
+                 if menuOpen {
+                     moveMenu(-1)
+@@ -1331,6 +1334,7 @@ struct RootPaletteView: View {
+     private func activateMenuItem(_ index: Int) {
+         guard let content = menuContent, (0..<content.rowCount).contains(index) else { return }
+         guard content.isSelectable(index) else { return }
++        if openMenu == .actions { core.launcherHistoryCoordinator.noteAction() }
+         // Close first: an action opening a window must find the palette key, or nothing hides it.
+         closeMenus()
+         // A mouse click on a row takes the caret with it; menus close back into the field.
+diff --git a/Tinycast/Resources/PersonalEdition.xcstrings b/Tinycast/Resources/PersonalEdition.xcstrings
+new file mode 100644
+index 0000000000000000000000000000000000000000..93b97d05bef4d8db98976c949a3fde0ba0d88f9f
+--- /dev/null
++++ b/Tinycast/Resources/PersonalEdition.xcstrings
+@@ -0,0 +1,748 @@
++{
++  "sourceLanguage" : "en",
++  "strings" : {
++    "Clear History" : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Verlauf löschen"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Borrar historial"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Effacer l’historique"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "履歴を消去"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "기록 지우기"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Limpar histórico"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Очистить историю"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "清除历史记录"
++          }
++        }
++      }
++    },
++    "Clear Launcher History" : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Launcher-Verlauf löschen"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Borrar historial del lanzador"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Effacer l’historique du lanceur"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "ランチャーの履歴を消去"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "런처 기록 지우기"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Limpar histórico do iniciador"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Очистить историю запуска"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "清除启动器历史记录"
++          }
++        }
++      }
++    },
++    "Clear launcher history?" : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Launcher-Verlauf löschen?"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "¿Borrar el historial del lanzador?"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Effacer l’historique du lanceur ?"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "ランチャーの履歴を消去しますか？"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "런처 기록을 지울까요?"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Limpar o histórico do iniciador?"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Очистить историю запуска?"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "清除启动器历史记录？"
++          }
++        }
++      }
++    },
++    "Couldn’t clear launcher history" : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Launcher-Verlauf konnte nicht gelöscht werden"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "No se pudo borrar el historial del lanzador"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Impossible d’effacer l’historique du lanceur"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "ランチャーの履歴を消去できませんでした"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "런처 기록을 지울 수 없습니다"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Não foi possível limpar o histórico do iniciador"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Не удалось очистить историю запуска"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "无法清除启动器历史记录"
++          }
++        }
++      }
++    },
++    "Edition" : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Edition"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Edición"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Édition"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "エディション"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "에디션"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Edição"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Редакция"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "版本"
++          }
++        }
++      }
++    },
++    "Encrypted history unavailable: %@" : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Verschlüsselter Verlauf nicht verfügbar: %@"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Historial cifrado no disponible: %@"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Historique chiffré indisponible : %@"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "暗号化された履歴を利用できません：%@"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "암호화된 기록을 사용할 수 없음: %@"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Histórico encriptado indisponível: %@"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Зашифрованная история недоступна: %@"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "加密的历史记录不可用：%@"
++          }
++        }
++      }
++    },
++    "Every recalled search goes, and its key with it. This can't be undone." : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Alle gespeicherten Eingaben und ihr Schlüssel werden gelöscht. Dies kann nicht widerrufen werden."
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Se borran todas las búsquedas guardadas y su clave. No se puede deshacer."
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Toutes les saisies mémorisées sont supprimées, avec leur clé. Cette action est irréversible."
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "保存された入力とその鍵がすべて削除されます。この操作は取り消せません。"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "저장된 모든 입력과 해당 키가 삭제됩니다. 이 작업은 되돌릴 수 없습니다."
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Todas as pesquisas guardadas e a sua chave são apagadas. Não é possível desfazer."
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Все сохранённые запросы и их ключ будут удалены. Это действие нельзя отменить."
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "所有保存的输入及其密钥都将被删除。此操作无法撤销。"
++          }
++        }
++      }
++    },
++    "Launcher history cleared" : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Launcher-Verlauf gelöscht"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Historial del lanzador borrado"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Historique du lanceur effacé"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "ランチャーの履歴を消去しました"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "런처 기록을 지웠습니다"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Histórico do iniciador limpo"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "История запуска очищена"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "已清除启动器历史记录"
++          }
++        }
++      }
++    },
++    "Official base version" : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Offizielle Basisversion"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Versión oficial de base"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Version officielle de base"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "ベースの公式バージョン"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "기반 공식 버전"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Versão oficial de base"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Официальная базовая версия"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "官方基础版本"
++          }
++        }
++      }
++    },
++    "Original project by Abue Ammar" : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Originalprojekt von Abue Ammar"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Proyecto original de Abue Ammar"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Projet original d’Abue Ammar"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Abue Ammar によるオリジナルプロジェクト"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Abue Ammar의 원본 프로젝트"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Projeto original de Abue Ammar"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Оригинальный проект Abue Ammar"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Abue Ammar 的原始项目"
++          }
++        }
++      }
++    },
++    "Personal edition with history" : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Persönliche Edition mit Verlauf"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Edición personal con historial"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Édition personnelle avec historique"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "履歴付きの個人版"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "기록 기능이 있는 개인판"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Edição pessoal com histórico"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Личная редакция с историей"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "带历史记录的个人版"
++          }
++        }
++      }
++    },
++    "Personal revision" : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Persönliche Revision"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Revisión personal"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Révision personnelle"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "個人リビジョン"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "개인 리비전"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Revisão pessoal"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Личная ревизия"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "个人修订版"
++          }
++        }
++      }
++    },
++    "Report a problem with this edition" : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Problem mit dieser Edition melden"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Informar de un problema con esta edición"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Signaler un problème avec cette édition"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "このエディションの問題を報告"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "이 에디션의 문제 신고"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Comunicar um problema com esta edição"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Сообщить о проблеме с этой редакцией"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "报告此版本的问题"
++          }
++        }
++      }
++    },
++    "Source code and releases" : {
++      "extractionState" : "manual",
++      "localizations" : {
++        "de" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Quellcode und Versionen"
++          }
++        },
++        "es" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Código fuente y versiones"
++          }
++        },
++        "fr" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Code source et versions"
++          }
++        },
++        "ja" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "ソースコードとリリース"
++          }
++        },
++        "ko" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "소스 코드 및 릴리스"
++          }
++        },
++        "pt" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Código-fonte e versões"
++          }
++        },
++        "ru" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "Исходный код и выпуски"
++          }
++        },
++        "zh-Hans" : {
++          "stringUnit" : {
++            "state" : "translated",
++            "value" : "源代码和发布版本"
++          }
++        }
++      }
++    }
++  },
++  "version" : "1.0"
++}
+diff --git a/docs/features/launcher-history.md b/docs/features/launcher-history.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..d29c2272f9bc6326c60e5f09a142ff99feb52470
+--- /dev/null
++++ b/docs/features/launcher-history.md
+@@ -0,0 +1,172 @@
++# Launcher history (personal edition)
++
++**This feature exists only in the personal edition [`sylvarg/tinycast-history`](https://github.com/sylvarg/tinycast-history).**
++It was requested upstream in [abue-ammar/tinycast#1570](https://github.com/abue-ammar/tinycast/issues/1570)
++("Calculator HIstory (or Launcher history in general)"), which the maintainer closed as `not_planned`
++on 14 October 2026 and declined to maintain. Nothing here is part of, or proposed to, the original
++project. The maintenance mechanics are in [`.personal/README.md`](../../.personal/README.md).
++
++↑ in an empty launcher field puts the most recent validated input back in the field, as if typed:
++results, the calculator card, the primary action and ⌘K all follow. Each further ↑ goes one entry
++older. ↓ always moves through the results; there is no walk back towards newer entries.
++
++## Invariants
++
++- **Recall starts only from a strictly empty field.** `↑` with no ⌘ ⌥ ⌃ ⇧, in `.launcher`, with the
++  search field focused, no argument field focused, no menu or control list open and no IME
++  composition. With any typed text, even a space, `↑` keeps its row navigation.
++- **The recalled text is a real query.** It is written through `PaletteState.rewriteQuery`, the same
++  path ⌘↵ uses to chain an answer, so the field, the caret, the results and the actions are exactly
++  those of a typed query. Recall itself never runs anything.
++- **A walk continues only while the field still holds what `↑` wrote.** Any edit, paste or deletion,
++  another rewrite, a screen change, hiding the palette or locking the session ends it; the next walk
++  starts again from the newest entry once the field is empty. It stops at the oldest entry and never
++  loops. The walk uses a snapshot taken on the first `↑`.
++- **Recalling records nothing; validating a recalled entry promotes it.** The same entry (same id)
++  moves to the front with a new `lastValidatedAt`, persisted; the count never grows.
++- **Only the launcher's own field is recorded.** Argument fields, chats, notes, extension searches and
++  every other screen are never read.
++- **Nothing is written in the clear.** The history lives only in `command-input-history.enc`, sealed
++  with its own Keychain key; see [Storage](#storage).
++
++## What counts as validated
++
++A text is recorded when one of these happens to the launcher's query (empty or whitespace-only text
++is never recorded, and text an action wrote — the answer ⌘↵ puts in the field — is never an input):
++
++| Event | Where it is noticed |
++| --- | --- |
++| ↵ or a click on a card, a file or a fallback row | `LauncherScreen.activate` |
++| A click on an entry row, or a ⌘K row that launches it | `LauncherCoordinator.launch` (only when it carries the palette's `searchQuery`) |
++| Any row of the launcher's ⌘K Actions menu | `RootPaletteView.activateMenuItem` |
++| ⌘↵ / ⇧⌘↵ on the calculator card | `CalculatorCoordinator.putAnswerInSearchBar` / `copyCalculationWithExpression` |
++| ⌘↵ (Show in Finder), ⌘R (Restart), ⌃⇧Q (Quit) on an app | `LauncherCoordinator.showInFinder` / `restart` / `quit` |
++| ⇥ or the fallback row asking Quick AI | `QuickAICoordinator.ask` |
++| **A result shown**: the calculator card with a value, or the color card | `LauncherHistoryObserver` on `LauncherList` |
++
++Opening ⌘K is not a validation; only running one of its rows is. A ↵ blocked by an empty required
++argument never reaches `activate`, so it records nothing.
++
++**Undo.** A validation is held for two seconds as `LauncherHistoryUndo`. If the action then asks a
++confirmation (`AppCore.confirm`) or a volume (`AppCore.pickVolume`) and the answer is Cancel, or a
++launch from the palette asks for its arguments instead of running (`pendingArgumentEntryID` set), the
++history is restored to what it was — provided nothing else changed it meanwhile. A menu row and the
++launch it runs undo together.
++
++**Shown results.** A result counts as shown when the launcher drew it for typed text and it stayed
++on screen for 0.7 s, or the palette was hidden (Escape, a click away, quitting) while it was there.
++A result typed straight past, a loading or error card, a plain list of matches and a recalled
++entry's own result are not recorded. Showing the same result again (re-opening a preserved screen)
++is not a second event, and copying a shown answer records it once.
++
++Validation records the field's text at the moment of the action, before the action closes or resets
++the palette; nothing waits for a process, a network request or the app to finish opening.
++
++## Architecture
++
++| File | Layer | Role |
++| --- | --- | --- |
++| `Features/LauncherHistory/Model/LauncherHistory.swift` | pure | Entries (id, text, lastValidatedAt), newest first, unique text, capacity 100 |
++| `Features/LauncherHistory/Model/LauncherHistorySession.swift` | pure | `LauncherHistorySession` (recall walk, origins, shown results) and `LauncherHistoryUndo` |
++| `Features/LauncherHistory/Service/LauncherHistoryStore.swift` | effect | Loads the sealed file on first use, saves, releases on lock, erases |
++| `Features/LauncherHistory/UI/LauncherHistoryCoordinator.swift` | coordinator | Owned by `AppCore`; applies the session to the palette and the store; lock; Clear |
++| `Features/LauncherHistory/UI/LauncherHistoryObserver.swift` | view | One `onChange` for query, rewrite token and card, so they arrive as one event |
++| `Platform/SealedEnvelope.swift` | pure crypto | AES-256-GCM envelope |
++| `Platform/SealedFile.swift` | effect | Sealed file + Keychain key + migration + atomic private writes |
++| `Windows/About/PersonalEditionSection.swift` | view | About › Personal edition with history |
++| `Resources/PersonalEdition.xcstrings` | strings | The edition's own table, in all eight languages |
++
++`AppCore.launcherHistoryCoordinator` is the only owner. The model files are Foundation-only and
++compiled verbatim by `Tests/launcher-history-test.swift`. The coordinator is told about the
++palette through short hooks in upstream files; [`.personal/README.md`](../../.personal/README.md)
++lists each one and why it is needed.
++
++**Clear Launcher History** is a launcher command (`CommandID.clearLauncherHistory`, listed in
++Settings › Commands). It asks through `DialogController`, then deletes the file and its key and
++reports with a HUD; the clipboard history and the calculator history are untouched.
++
++## Storage
++
++| Data | File (Application Support/`<bundle id>`) | Keychain account | Notes |
++| --- | --- | --- | --- |
++| Launcher history | `command-input-history.enc` | `SealedFile.Account.launcherHistory` | new in this edition |
++| Calculator history | `calculator-history.enc` | `SealedFile.Account.calculatorHistory` | migrated from `calculator-history.json` |
++| Learned search terms (ranking) | `launcher-ranking.enc` | `SealedFile.Account.launcherRanking` | migrated from `launcher-ranking.json` |
++
++**Envelope.** `"TCSE"`, version byte `1`, then `AES.GCM.SealedBox.combined` (12-byte random nonce,
++ciphertext, 16-byte tag). The associated data is the header plus `tinycast-sealed-file:<file name>`,
++so a file copied over another store's, or with an edited header, fails authentication before
++anything is decoded. Everything personal — texts, dates, ids, results — is inside the ciphertext.
++
++**Keys.** One random 256-bit `SymmetricKey` per store, created on the user's Mac by CryptoKit the
++first time that store writes, and kept only as a generic password in the user's login keychain
++(service `<bundle id>.sealed-storage-keys`, one account per store), through upstream's
++`KeychainSecretStore`. It is never in the code, the binary, preferences, a neighbouring file, the
++environment, a backup or CI. Separate keys mean erasing the history's key leaves the others readable.
++
++**Who can read a key.** `SecItemAdd` on the macOS file-based keychain gives the item an access
++control list whose only trusted application is the creator, recorded by its *designated
++requirement* — for this self-signed build, `identifier "com.tinycast.app" and certificate leaf =
++H"…"`. A later build signed with the same `Tinycast Self-Signed` certificate satisfies it, so updates
++keep access without a prompt; any other app, including the official Tinycast signed with a different
++certificate, gets the system's keychain prompt and is refused unless the user explicitly allows it.
++This edition deliberately uses the file-based keychain: the data-protection keychain and access
++groups need a provisioning profile, which a self-signed app without a paid Apple Developer account
++cannot have ([TN3137](https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains)).
++`.personal/tests/signing.sh` checks this on CI with two real throwaway identities.
++
++**Writes.** Encrypt in memory, write the envelope to a `0600` temporary created with `O_EXCL` in the
++same folder, `fsync`, `rename` over the file. Only sealed bytes ever reach a write call. Files over
++16 MiB are refused unread.
++
++**Failure.** A missing key with an existing file, a refused Keychain access, a failed
++authentication or an oversized file make that store *unavailable*: its read fails, every later
++write in the session is refused (`SealedFile.Failure.blocked`), and a HUD names the file once. The
++launcher keeps working; ↑ simply does nothing. Nothing ever falls back to plain text, and a missing
++key never silently gets replaced by a new one over an existing file.
++
++**Lock.** On `com.apple.screenIsLocked` the coordinator ends any walk, forgets pending results and
++the undo, and releases the decrypted history; ↑ is inert until `com.apple.screenIsUnlocked`, after
++which the file is read again on first use. Swift strings cannot be reliably zeroed, so this limits
++how long plaintext stays referenced; it does not promise that no copy remains in memory.
++
++## Migration
++
++`SealedFile.read()` with a `legacyName`:
++
++1. Only the sealed file: open it.
++2. Only the legacy plain file: read it in memory, seal it with the store's key (creating it if
++   needed), read the sealed file back and compare, and only then delete the plain file.
++3. Both (a crash between 2's write and delete, or the official build ran again in between): the
++   newer by modification date wins. A valid sealed file is never overwritten by an older plain one;
++   a plain file written since by the official build is sealed in. The plain file is removed either way.
++
++Any failure leaves the plain file where it was, blocks writes for the session and reports; the next
++launch retries. Running it again is a no-op.
++
++## Backups and exports
++
++`BackupComposer` (Settings › Backup, Export Backup) no longer writes the calculator history, and
++writes the ranking table without its search terms, so neither reaches the plain `.tinycast` archive
++or its staging folder. The launcher history and every key are never exported. Importing an older
++backup still restores both into their sealed files.
++
++## Limits
++
++- Protection is **at rest**: a copied or restored `.enc` file is unreadable without the key in that
++  user's login keychain. The app necessarily holds decrypted entries in memory while it shows and
++  recalls them; a compromised Mac, a process able to read its memory, or an unlocked screen are
++  outside this protection.
++- **Losing a key loses that store.** If the Keychain item is deleted or the login keychain is reset,
++  the matching `.enc` stays unreadable and writes are blocked. Clear Launcher History removes the
++  history file and key and starts afresh. For the calculator history or ranking, quit Tinycast and
++  delete `calculator-history.enc` or `launcher-ranking.enc`; a new key is created on the next write.
++- **Earlier copies cannot be taken back.** Exports, Time Machine snapshots or backups made before this
++  edition (or by the official build) may still contain `calculator-history.json`,
++  `launcher-ranking.json` or a `.tinycast` archive. Deleting a file on an SSD/APFS volume does not
++  guarantee its blocks are erased; only FileVault protects those at rest.
++- **Going back to the official build** loses access: it cannot read the `.enc` files and starts these
++  histories empty (and would recreate plain files). There is deliberately no automatic plain export.
++- Text you explicitly copy goes to the clipboard and, through upstream's Clipboard History, to its
++  database; Quick AI questions asked with ⇥ live in upstream's chat history. Both are those features'
++  own data, unchanged by this edition.

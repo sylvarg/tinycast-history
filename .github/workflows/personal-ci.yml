@@ -1,0 +1,74 @@
+name: "Personal · CI"
+
+# Builds and tests the working branch on macOS: the personal edition's own checks are blocking.
+on:
+  push:
+    branches: ["claude/**", "personal/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: personal-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The gate compares upstream harnesses against the pristine upstream commit.
+          fetch-depth: 0
+
+      - name: Select Xcode 26
+        run: |
+          XCODE_PATH="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n1)"
+          [ -n "$XCODE_PATH" ] || { ls /Applications | grep -i xcode; exit 1; }
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+          echo "Using $XCODE_PATH"
+
+      - name: Tools
+        run: |
+          command -v xcodegen > /dev/null || brew install --quiet xcodegen
+          command -v swiftlint > /dev/null || brew install --quiet swiftlint
+          xcodebuild -version; swift --version; xcodegen --version; swiftlint version
+
+      - name: Gate
+        run: .personal/gate.sh "$(cat .personal/UPSTREAM)"
+
+  # The release path with a throwaway identity: build, sign, package, verify, launch. Never published.
+  release-dry-run:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select Xcode 26
+        run: |
+          XCODE_PATH="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n1)"
+          [ -n "$XCODE_PATH" ] || { ls /Applications | grep -i xcode; exit 1; }
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Tools
+        run: command -v xcodegen > /dev/null || brew install --quiet xcodegen
+
+      - name: Build, sign, package and launch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: 0.0.1-h.1
+        run: |
+          xcodegen generate --quiet
+          .personal/signing/create-identity.sh "$RUNNER_TEMP/identity" > /dev/null
+          export P12_BASE64="$(cat "$RUNNER_TEMP/identity/SIGNING_P12_BASE64.txt")"
+          export P12_PASSWORD="$(cat "$RUNNER_TEMP/identity/SIGNING_P12_PASSWORD.txt")"
+          export PERSONAL_DRY_RUN=1
+          .personal/build-release.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dry-run-throwaway-signature-not-for-install
+          path: dist/
+          retention-days: 3

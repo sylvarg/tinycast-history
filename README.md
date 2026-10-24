@@ -1,154 +1,89 @@
-# Tinycast
+# Tinycast — édition personnelle avec historique
 
-**A tiny, fully native macOS launcher. One hotkey, everything you reach for all day, under 100 MB of
-RAM.**
+**Édition personnelle, publique et non officielle** de [Tinycast](https://github.com/abue-ammar/tinycast),
+le lanceur macOS d'Abue Ammar. Elle reste l'application **Tinycast** (`Tinycast.app`,
+`com.tinycast.app`), remplace l'installation officielle et reprend ses réglages et données, et ajoute
+une seule fonctionnalité : **rappeler avec ↑ les saisies validées du lanceur**.
 
-<p align="center">
-  <a href="https://github.com/abue-ammar/tinycast/releases/latest">
-    <img alt="Latest release"
-         src="https://img.shields.io/github/v/release/abue-ammar/tinycast?sort=semver&style=flat&label=release&color=1F6FEB"></a>
-  <img alt="Swift 6.0"
-       src="https://img.shields.io/badge/Swift-6.0-F05138?style=flat&logo=swift&logoColor=white">
-  <img alt="macOS 26 or later"
-       src="https://img.shields.io/badge/macOS-26%2B-000000?style=flat&logo=apple&logoColor=white">
-  <a href="LICENSE">
-    <img alt="License: AGPL-3.0"
-         src="https://img.shields.io/badge/License-AGPL--3.0-3DA639?style=flat"></a>
-  <a href="https://discord.gg/v2Eeb4QQy3">
-    <img alt="Join the Tinycast Discord"
-         src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white"></a>
-</p>
+> Ce dépôt n'est pas le projet officiel et n'est pas soutenu par son auteur. La demande d'origine,
+> [abue-ammar/tinycast#1570](https://github.com/abue-ammar/tinycast/issues/1570) « Calculator HIstory
+> (or Launcher history in general) », a été **fermée comme `not_planned`** le 14 octobre 2026 : le
+> mainteneur a [décliné](https://github.com/abue-ammar/tinycast/issues/1570#issuecomment-6163760400)
+> la maintenance de cet historique, conformément à sa [position sur les personnalisations](https://github.com/abue-ammar/tinycast/issues/1554).
+> Cette fonctionnalité appartient donc à cette édition seule ; merci de ne pas la signaler au projet
+> original. Les problèmes de cette édition se signalent [ici](https://github.com/sylvarg/tinycast-history/issues).
 
-SwiftUI and AppKit, **zero third-party dependencies**, no Electron and no telemetry. It also **runs
-real Raycast extensions**, rendered as native SwiftUI. Free, open source, and staying that way.
+## La fonctionnalité
 
-For anything private, email [iabueammar@gmail.com](mailto:iabueammar@gmail.com).
+- Dans le lanceur, champ **vide**, **↑** remet dans le champ la dernière saisie validée, curseur à la
+  fin : résultats, carte de calcul, action principale et menu ⌘K se mettent à jour comme si vous
+  l'aviez tapée. Chaque ↑ suivant remonte d'une entrée, jusqu'à la plus ancienne (pas de boucle).
+- **↓** navigue toujours dans les résultats de la saisie rappelée (puis ↵, ⌘K…). Il n'y a pas de
+  retour vers des saisies plus récentes.
+- Dès que vous modifiez le texte, ↑ redevient la navigation habituelle ; videz le champ pour
+  recommencer depuis la saisie la plus récente.
+- Une saisie est enregistrée quand une action est réellement lancée depuis la barre (ouvrir une app,
+  une commande, un quicklink, une commande d'extension, une ligne ⌘K, une copie…) **ou** quand un
+  résultat de calcul (y compris conversions, fuseaux, dates) ou une carte de couleur est réellement
+  affiché — même si vous fermez ensuite avec Échap. Rappeler une entrée ne l'enregistre pas ; la
+  valider à nouveau la remonte en tête, sans doublon. Au plus 100 entrées.
+- **Clear Launcher History** (commande du lanceur) efface cet historique et sa clé, après confirmation,
+  sans toucher à l'historique du presse-papiers ni à celui des calculs.
 
-<p align="center">
-  <img src="docs/screenshot.png" alt="Tinycast command palette" width="720">
-</p>
+Détails et limites : [docs/features/launcher-history.md](docs/features/launcher-history.md).
 
-## Support
+## Protection des données
 
-Tinycast is **free, and it stays that way**. If you enjoy it, consider buying a wallpaper pack and get a discord role. It would help me a lot.
+L'historique (`command-input-history.enc`), **et aussi** l'historique des calculs et les termes de
+recherche appris par le lanceur — qui contiennent les mêmes saisies — sont chiffrés sur le disque
+(AES-256-GCM, CryptoKit), chacun avec sa propre clé aléatoire conservée uniquement dans **votre
+trousseau macOS**, accessible à cette application signée. Les anciens fichiers en clair
+(`calculator-history.json`, `launcher-ranking.json`) sont migrés puis supprimés. Les exports de
+sauvegarde n'incluent plus ni calculs ni termes de recherche. Cette protection vaut **au repos** :
+un fichier copié ou restauré est illisible sans la clé, mais un Mac compromis ou une session
+déverrouillée ne sont pas protégés. Les copies faites auparavant (sauvegardes, Time Machine, exports)
+ne peuvent pas être effacées rétroactivement. En revenant à la version officielle, ces historiques
+repartent vides (elle ne lit pas les fichiers chiffrés).
 
-<p align="center">
-  <a href="https://tinycast.dev/support">
-    <img alt="Support Tinycast" width="188" height="44" src="docs/support-button.svg"></a><br>
-  <sub>Payments are handled securely by <a href="https://polar.sh">Polar.sh</a>.</sub>
-</p>
+## Installation (Apple Silicon, macOS 26 ou plus récent)
 
-## Features
+1. Téléchargez `Tinycast-<version>.dmg` depuis les [releases](https://github.com/sylvarg/tinycast-history/releases)
+   et vérifiez si vous le souhaitez son empreinte (`.sha256`).
+2. Quittez Tinycast s'il tourne, puis glissez **Tinycast** dans **Applications** en remplaçant la copie
+   officielle. Réglages, raccourcis, presse-papiers, notes et snippets sont conservés.
+3. L'application est auto-signée (pas de notarisation Apple) : une fois, dans Terminal,
+   `xattr -dr com.apple.quarantine /Applications/Tinycast.app` (ou *Réglages Système › Confidentialité
+   et sécurité › Ouvrir quand même* au premier lancement).
+4. Le certificat diffère de celui de la version officielle : macOS demande à nouveau
+   **Accessibilité** (Réglages Système › Confidentialité et sécurité › Accessibilité : retirez l'ancienne
+   entrée Tinycast, ajoutez la nouvelle) et, si vous utilisez des fournisseurs d'IA ou MCP, l'accès aux
+   clés déjà enregistrées par l'ancienne version (« Toujours autoriser »).
+5. À propos de Tinycast affiche **« Édition personnelle avec historique »**, la version officielle de
+   base et la révision personnelle.
 
-- **App launcher** — fuzzy-search and launch anything, pin favorites, see what's running, quit an app
-  or every app at once.
-- **Global hotkey** — one shortcut summons the palette from anywhere.
-- **Per-app hotkeys** — bind a key to an app; press it to toggle (focus/hide).
-- **Search Files** — open files and folders from the folders you choose, through Spotlight, with no
-  index of our own.
-- **Dictionary** — look a word up with the Define Word command, or define whatever you typed from the
-  launcher's fallbacks, read from the Mac's own dictionaries.
-- **Clipboard history** — text and images, searchable, pasted back into the app you were using.
-- **Calculator** — do math, unit, live currency and crypto conversions inline, right in the palette.
-- **Quicklinks** — turn a URL, search, file or deeplink into a command, with placeholders for typed
-  input, the clipboard or the date.
-- **Apple Shortcuts** — search and run the shortcuts you built in the Shortcuts app, with aliases and
-  global hotkeys.
-- **Snippets** — reusable Markdown templates with dynamic placeholders, arguments, nested references
-  and optional keyword expansion.
-- **Custom commands** — run named shell commands through fuzzy search or their own global hotkeys.
-- **Window management** — 34 Rectangle-style actions: halves, quarters, thirds, sizing, nudging,
-  display moves, fullscreen and Spaces.
-- **System actions** — lock, sleep, restart, empty trash, toggle appearance, Bluetooth, mute, hidden
-  files, and more.
-- **Calendar and meetings** — your next meeting on the empty palette and in the menu bar, one key to
-  join it, or let it join itself.
-- **Notes** — an unlimited collection of plain Markdown files in one floating editor, searchable from
-  the palette and rendered as you write.
-- **Emoji picker** — a searchable emoji grid, one keystroke away.
-- **AI chat** — use your own key or an installed AI account: ask Quick AI from the palette, or keep
-  longer conversations in the AI Chat window, with a searchable, pinnable history. Off out of the box,
-  like every AI feature.
-- **Quick Actions** — fix grammar, rewrite, translate or summarize the selected text in any app.
-- **Raycast extensions** — run the ones you already have natively, rendered as SwiftUI.
-- **Backup and import** — export your settings to a file, or import your setup from Raycast.
+**Mises à jour** : l'application vérifie les releases de **ce dépôt** et installe elle-même les
+nouvelles versions (même identifiant, signature vérifiée et certificat identique à celui de l'app
+installée). Une version `0.12.1-h.2` corrige `0.12.1-h.1` ; la release officielle suivante arrive
+comme `0.12.2-h.1`. Homebrew n'est pas concerné.
 
-## Install
+**Revenir en arrière** : quittez Tinycast, installez le DMG d'une release précédente de ce dépôt (ou
+la version officielle) dans Applications. Une version plus ancienne de cette édition lit les mêmes
+fichiers chiffrés ; la version officielle ne les lit pas (historiques vides) et recrée ses fichiers
+en clair.
 
-First, add the tap:
+## Construction et maintenance
 
-```sh
-brew trust --tap abue-ammar/tinycast   # required for third-party taps
-brew tap abue-ammar/tinycast
-```
+Tout est construit et testé par GitHub Actions sur macOS ; aucun Xcode local n'est nécessaire.
+`main` est **générée automatiquement** : *commit officiel + patches de [`.personal/`](.personal/README.md)*.
+La synchronisation suit la branche officielle environ toutes les 10 minutes ; chaque release stable
+officielle est reconstruite depuis son tag exact, testée, signée et publiée ici. Maintenance,
+inventaire des modifications du code original et diagnostics : [`.personal/README.md`](.personal/README.md).
+Signature : [`.personal/SIGNING.md`](.personal/SIGNING.md). README original : [README.upstream.md](README.upstream.md).
 
-Then run the one line that matches your Mac:
+## Crédits et licence
 
-| Your Mac                         | Install                                  |
-| -------------------------------- | ---------------------------------------- |
-| Apple silicon, macOS 26 or newer | `brew install --cask tinycast`           |
-| Intel, macOS 26                  | `brew install --cask tinycast-universal` |
-
-Not sure which you have? **Apple menu → About This Mac.** Homebrew checks too, and refuses the
-wrong one.
-
-Want early builds? `brew install --cask tinycast@beta` puts `Tinycast Beta.app` beside the stable
-app, with its own settings and permissions. Apple silicon, macOS 26+.
-
-Homebrew clears the macOS quarantine flag on every install and update, so there is nothing else to
-run. Downloading a DMG from [Releases](https://github.com/abue-ammar/tinycast/releases) instead?
-Tinycast is self-signed, so clear the flag once:
-`xattr -dr com.apple.quarantine "/Applications/Tinycast.app"`.
-
-## Permissions
-
-**Accessibility** — needed when Tinycast pastes or expands text into another app, and the only
-permission snippet keyword expansion needs. You're prompted when you first use a feature that needs
-it; grant access in **System Settings → Privacy & Security → Accessibility**. Snippets ship
-disabled, and keystrokes are matched locally, never stored and never sent anywhere.
-
-## Using it
-
-1. Open **Settings → General** and record a global shortcut to summon Tinycast.
-2. Press it anywhere → the palette floats in. Type to filter, **↵** to launch.
-3. **Tab** switches between Apps and Clipboard; **↑/↓** move, **Esc** dismisses.
-4. **Settings → Shortcuts** — search an app or custom command and record a global shortcut.
-5. **Settings → Snippets** — enable the feature, then create templates with expansion keywords.
-
-## Building from source
-
-See **[docs/development.md](docs/development.md)** for the toolchain, build, packaging, release and
-website workflows. **[docs/](docs/README.md)** indexes everything else — architecture, engineering
-standards, the design system and one document per feature.
-
-## Contributing
-
-> [!IMPORTANT]
-> **Open an issue before you write code — this is mandatory.** Get the bug or the feature agreed on
-> first; discussing it in the issue (or on [Discord](https://discord.gg/v2Eeb4QQy3)) is strongly
-> encouraged. A PR that doesn't close an issue marked `approved` is closed automatically however good
-> the patch is, and the work is wasted. Docs-only fixes are the one exception.
->
-> Tinycast's feature set is deliberately closed, and "another launcher has it" is not a reason on its
-> own. Ask whether a feature is wanted before you ask for it.
-
-Read **[CONTRIBUTING.md](CONTRIBUTING.md)** first — it covers the memory budget every PR is held to,
-the before/after video requirement for visual changes, and why features get declined. Every PR fills
-in the **[pull request template](.github/PULL_REQUEST_TEMPLATE.md)**. Security issues go through
-[SECURITY.md](SECURITY.md), not the issue tracker.
-
-Questions, ideas, or just want to follow along? **[Join the Discord](https://discord.gg/v2Eeb4QQy3)**.
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=abue-ammar%2Ftinycast&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=abue-ammar/tinycast&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=abue-ammar/tinycast&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=abue-ammar/tinycast&type=date&legend=top-left" />
- </picture>
-</a>
-
-## License
-
-[AGPL-3.0](LICENSE)
+Tinycast est © Abue Ammar et ses contributeurs, sous licence **AGPL-3.0** ([LICENSE](LICENSE),
+[NOTICE.md](NOTICE.md)) ; cette édition et ses modifications sont publiées sous la même licence, avec
+le code source complet de chaque version (tag `v<version>` et dossier `.personal/patches`). La
+mécanique de synchronisation et de publication s'inspire de [Tinycast Space](https://github.com/sermelipharo/tinycast-space)
+de sermelipharo ; aucune de ses fonctionnalités n'est reprise.
