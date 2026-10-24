@@ -37,12 +37,13 @@ enum BackupComposer {
         if categories.contains(.learning) {
             // From memory, not the files: the ranking store persists asynchronously.
             let encoder = BackupBundle.encoder
-            plan.learning[.ranking] = try? encoder.encode(core.launcherRanking.visits)
+            // Typed searches and calculations stay in their sealed files, never in a plain archive.
+            let visits = core.launcherRanking.visits.mapValues {
+                LauncherVisit(anchor: $0.anchor, openedAt: $0.openedAt, searchTerms: [])
+            }
+            plan.learning[.ranking] = try? encoder.encode(visits)
             plan.learning[.emoji] = try? encoder.encode(core.frequentEmoji.records)
-            plan.learning[.calculator] = try? encoder.encode(core.calcHistory.entries)
-            plan.learningRecords =
-                core.launcherRanking.visits.count + core.frequentEmoji.records.count
-                + core.calcHistory.entries.count
+            plan.learningRecords = visits.count + core.frequentEmoji.records.count
         }
         return plan
     }
