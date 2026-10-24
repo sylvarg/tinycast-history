@@ -65,6 +65,8 @@ final class LauncherCoordinator {
     func launch(
         _ app: AppEntry, searchQuery: String? = nil, arguments: [String: String] = [:]
     ) {
+        core.launcherHistoryCoordinator.noteLaunch(searchQuery: searchQuery)
+        defer { core.launcherHistoryCoordinator.launchDispatched() }
         // A category word is no search for the row: learning it would rank the row under "s".
         if !CommandCatalog.isQueryDriven(app) {
             let term = searchQuery.flatMap {
@@ -180,6 +182,8 @@ final class LauncherCoordinator {
             core.quickActionCoordinator.run(.summarize)
         case .calculatorHistory:
             paletteCoordinator.togglePalette(mode: .calculatorHistory)
+        case .clearLauncherHistory:
+            Task { await core.launcherHistoryCoordinator.clearHistory() }
         case .clipboardHistory:
             paletteCoordinator.togglePalette(mode: .clipboard)
         case .pasteSequentially:
@@ -287,6 +291,7 @@ final class LauncherCoordinator {
     }
 
     func showInFinder(_ app: AppEntry) {
+        core.launcherHistoryCoordinator.noteAction()
         paletteCoordinator.hidePalette(restoreFocus: false)
         AppLauncher.showInFinder(app.url)
     }
@@ -294,6 +299,7 @@ final class LauncherCoordinator {
     /// Focus is never handed back: the relaunch takes it, or the app that refused has it.
     func restart(_ app: AppEntry) {
         guard app.kind == .application, let bundleID = app.bundleID else { return }
+        core.launcherHistoryCoordinator.noteAction()
         paletteCoordinator.hidePalette(restoreFocus: false)
         Task { await AppLauncher.restart(bundleID: bundleID, url: app.url) }
     }
@@ -306,6 +312,7 @@ final class LauncherCoordinator {
             windowController.previousApp?.bundleURL?.resolvingSymlinksInPath().standardizedFileURL.path
             == app.id
         guard AppLauncher.quit(bundleID: bundleID, url: app.url, force: force) else { return }
+        core.launcherHistoryCoordinator.noteAction()
         paletteCoordinator.hidePalette(restoreFocus: !quittingPreviousApp)
     }
 }

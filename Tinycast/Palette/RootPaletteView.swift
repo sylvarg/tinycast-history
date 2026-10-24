@@ -513,6 +513,9 @@ struct RootPaletteView: View {
             .onKeyPress(keys: [.upArrow], phases: [.down, .repeat]) { press in
                 if let reorder = movePinnedOrFavorite(-1, modifiers: press.modifiers) { return reorder }
                 if vm.isControlListOpen { return .ignored }
+                if core.launcherHistoryCoordinator.recall(
+                    modifiers: press.modifiers, menuOpen: menuOpen,
+                    fieldFocused: searchFocused && argumentFocused == nil) { return .handled }
                 if isCollapsed { return .ignored }
                 if menuOpen {
                     moveMenu(-1)
@@ -1331,6 +1334,7 @@ struct RootPaletteView: View {
     private func activateMenuItem(_ index: Int) {
         guard let content = menuContent, (0..<content.rowCount).contains(index) else { return }
         guard content.isSelectable(index) else { return }
+        if openMenu == .actions { core.launcherHistoryCoordinator.noteAction() }
         // Close first: an action opening a window must find the palette key, or nothing hides it.
         closeMenus()
         // A mouse click on a row takes the caret with it; menus close back into the field.

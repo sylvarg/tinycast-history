@@ -265,6 +265,7 @@ struct LauncherScreen: PaletteScreen {
     }
 
     func activate(at selection: Int) {
+        if hasPrimaryAction(at: selection) { core.launcherHistoryCoordinator.noteAction() }
         switch row(at: selection) {
         // Error cards no-op — copyCalculatorResult only acts on value payloads.
         case .calc(let result): core.calculatorCoordinator.copyCalculatorResult(result)
@@ -524,6 +525,8 @@ struct LauncherScreen: PaletteScreen {
             files: fileSection,
             fallbacks: fallbackSection
         )
+        .launcherHistory(
+            core.launcherHistoryCoordinator, palette: vm, resultShown: calc?.isActionable ?? (color != nil))
     }
 
     private var fileSection: LauncherList.FileSection? {
