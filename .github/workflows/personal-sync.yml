@@ -1,0 +1,158 @@
+name: "Personal · sync upstream"
+
+# main = upstream main + .personal/patches, rebuilt whenever upstream moves or .personal changes.
+# A cheap Linux check runs every 10 minutes; the macOS build only when there is something new.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild even if nothing changed"
+        type: boolean
+        default: false
+
+concurrency:
+  group: personal-sync
+  cancel-in-progress: false
+
+# Writes only the personal-status branch; main is pushed with PERSONAL_PUSH_TOKEN.
+permissions:
+  contents: write
+
+env:
+  UPSTREAM: https://github.com/abue-ammar/tinycast.git
+  GENERATED_SUBJECT: "personal: launcher history edition on upstream "
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      go: ${{ steps.patches.outputs.go }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          FORCE: ${{ inputs.force }}
+          HAS_PUSH_TOKEN: ${{ secrets.PERSONAL_PUSH_TOKEN != '' }}
+        run: |
+          # Without the push token nothing could be published; say so and stop.
+          if [ "$HAS_PUSH_TOKEN" != "true" ]; then
+            echo "::warning::PERSONAL_PUSH_TOKEN is not set (see .personal/SIGNING.md); nothing is synced"
+            echo "go=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          UP=$(git ls-remote "$UPSTREAM" refs/heads/main | cut -f1)
+          [ -n "$UP" ] || { echo "::error::upstream main could not be read"; exit 1; }
+          BUILT=$(gh api "repos/$REPO/contents/.personal/UPSTREAM?ref=main" -q .content | base64 -d | tr -d '\n' || true)
+          HEAD=$(gh api "repos/$REPO/commits/main" -q .sha)
+          MSG=$(gh api "repos/$REPO/commits/main" -q .commit.message | head -1)
+          GO=false
+          # A new upstream commit, or a hand-made commit on top of the last generated one.
+          if [ "$UP" != "$BUILT" ] || [[ "$MSG" != "$GENERATED_SUBJECT"* ]]; then GO=true; fi
+          # The exact combination that already failed is not retried until something moves.
+          BLOCKED="Sync blocked: upstream ${UP:0:7} + main ${HEAD:0:7}"
+          if .personal/report.sh blocked sync "$BLOCKED"; then GO=false; fi
+          [ "$FORCE" = "true" ] && GO=true
+          echo "upstream=$UP built=$BUILT main=$HEAD go=$GO"
+          echo "go=$GO" >> "$GITHUB_OUTPUT"
+
+      # A conflict needs no macOS runner to be found, and is reported once per cause.
+      - id: patches
+        if: steps.check.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags "$UPSTREAM" main
+          UP=$(git rev-parse FETCH_HEAD)
+          if cause=$(.personal/check-apply.sh "$UP" "$(cat .personal/UPSTREAM 2>/dev/null || true)" "$RUNNER_TEMP/conflict.md"); then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "go=false" >> "$GITHUB_OUTPUT"
+          [ -n "$cause" ] || exit 1
+          .personal/report.sh open sync "Sync blocked: upstream ${UP:0:7} + main $(git rev-parse --short=7 HEAD)" \
+            "$RUNNER_TEMP/conflict.md" "$cause"
+          echo "::warning::patch conflict, nothing synced: $cause"
+
+  sync:
+    needs: check
+    if: needs.check.outputs.go == 'true'
+    runs-on: macos-26
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          # Workflows write: upstream commits touching .github/workflows cannot be pushed otherwise.
+          token: ${{ secrets.PERSONAL_PUSH_TOKEN }}
+
+      - name: Select Xcode 26
+        run: |
+          XCODE_PATH="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n1)"
+          [ -n "$XCODE_PATH" ] || { ls /Applications | grep -i xcode; exit 1; }
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Tools
+        run: |
+          command -v xcodegen > /dev/null || brew install --quiet xcodegen
+          command -v swiftlint > /dev/null || brew install --quiet swiftlint
+
+      - name: Rebuild main on upstream
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          OLD=$(git rev-parse HEAD)
+          git fetch --no-tags "$UPSTREAM" main
+          UP=$(git rev-parse FETCH_HEAD)
+          KEEP="$RUNNER_TEMP/keep"; mkdir -p "$KEEP/wf"
+          cp -R .personal "$KEEP/"; cp .github/workflows/personal-*.yml "$KEEP/wf/"
+          git checkout -q --detach "$UP"
+          rm -rf .personal; cp -R "$KEEP/.personal" .; mkdir -p .github/workflows; cp "$KEEP"/wf/* .github/workflows/
+          echo "$UP" > .personal/UPSTREAM
+          PERSONAL_COMMIT=1 PERSONAL_REFRESH=1 .personal/apply.sh
+          git add -A
+          git commit -q -m "${GENERATED_SUBJECT}${UP:0:7}" \
+            -m "Generated by personal-sync.yml: .personal, the README and the rewrites. Each patch is its own commit below; edit .personal/patches, never this branch's code by hand."
+          { echo "OLD=$OLD"; echo "UP=$UP"; } >> "$GITHUB_ENV"
+
+      # Its outcome decides the rest: a known cause is recorded quietly, a new one fails the run.
+      - name: Build and test
+        id: gate
+        continue-on-error: true
+        run: .personal/gate.sh "$UP"
+
+      # A push to main while this ran is not a failure: the next run rebuilds on it.
+      - name: Publish main
+        if: steps.gate.outcome == 'success'
+        run: |
+          git push --force-with-lease="main:$OLD" origin HEAD:main && exit 0
+          [ "$(git ls-remote origin refs/heads/main | cut -f1)" != "$OLD" ] || exit 1
+          echo "::notice::main moved during the build, so this result is dropped; the next run rebuilds on it"
+          echo "RACED=1" >> "$GITHUB_ENV"
+
+      - name: Clear the blocked state
+        if: steps.gate.outcome == 'success' && env.RACED != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .personal/report.sh close sync
+
+      - name: Report blocked sync
+        if: failure() || steps.gate.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -n "${UP:-}" ] || UP=$(git ls-remote "$UPSTREAM" refs/heads/main | cut -f1)
+          HEAD=$(git rev-parse origin/main)
+          CAUSE=$(cat "$RUNNER_TEMP/gate-cause.txt" 2>/dev/null || echo "sync-step-failed")
+          .personal/report.sh open sync "Sync blocked: upstream ${UP:0:7} + main ${HEAD:0:7}" \
+            "$RUNNER_TEMP/gate-report.md" "$CAUSE"
