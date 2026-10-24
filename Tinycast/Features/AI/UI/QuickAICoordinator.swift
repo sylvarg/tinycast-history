@@ -42,6 +42,7 @@ final class QuickAICoordinator {
             show()
             return
         }
+        core.launcherHistoryCoordinator.noteAction()
         chat.startNewChat()
         paletteCoordinator.showPalette(mode: .ai)
         send(prompt)
