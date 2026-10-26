@@ -25,7 +25,7 @@ warnings=$(grep -E '^/.*/Tinycast/.*: warning: ' "$TMP/gate-build.log" | sort -u
 # The block's cause: the failed checks, plus the first errors with paths and lines stripped.
 report() { # failed-checks details-file
   local errors
-  errors=$(sed -E 's#^/[^:]*/##; s#:[0-9]+:[0-9]+:#:#' "$2" 2> /dev/null | head -5)
+  errors=$(grep -E 'error|FAIL' "$2" 2> /dev/null | sed -E 's#^/[^:]*/##; s#:[0-9]+:[0-9]+:#:#' | head -5)
   printf '%s %s' "$1" "$(printf '%s' "$errors" | shasum | cut -c1-12)" > "$TMP/gate-cause.txt"
   { echo "Failed checks: \`$1\`"; echo; echo '```'; head -80 "$2" 2> /dev/null; echo '```'; } > "$TMP/gate-report.md"
 }
@@ -33,8 +33,27 @@ report() { # failed-checks details-file
 if [ $build -ne 0 ]; then
   grep -E ': error: ' "$TMP/gate-build.log" | sort -u | head -60 | tee "$TMP/gate-errors.txt"
   tail -40 "$TMP/gate-build.log"
-  report build "$TMP/gate-errors.txt"
-  echo "::error::the Debug build failed"
+  # Upstream sometimes builds only with a newer Xcode than the runners have: say whose break it is.
+  step "Pristine upstream build"
+  wt="$TMP/gate-pristine-build"
+  git worktree add --force --detach "$wt" "$UP" > /dev/null
+  (cd "$wt" && xcodegen generate --quiet && xcodebuild -project Tinycast.xcodeproj -scheme Tinycast \
+    -configuration Debug -derivedDataPath "$TMP/gate-pristine-dd" CODE_SIGNING_ALLOWED=NO build) \
+    > "$TMP/gate-pristine.log" 2>&1
+  pristine=$?
+  git worktree remove --force "$wt"
+  done_step
+  xcode="$(xcodebuild -version | head -1)"
+  if [ $pristine -ne 0 ]; then
+    { echo "Upstream ${UP:0:7} does not build on its own either with $xcode, so this is upstream's"
+      echo "break, not this edition's: the sync waits for upstream to fix it."; echo
+      cat "$TMP/gate-errors.txt"; } > "$TMP/gate-upstream-errors.txt"
+    report upstream-build-broken "$TMP/gate-upstream-errors.txt"
+    echo "::error::upstream ${UP:0:7} does not build with $xcode even without this edition's patches"
+  else
+    report build "$TMP/gate-errors.txt"
+    echo "::error::the Debug build failed, and pristine upstream ${UP:0:7} builds: the patches need work"
+  fi
   exit 1
 fi
 if [ -n "$warnings" ]; then echo "$warnings"; echo "::error::the build has warnings"; failures+=(warnings); fi
