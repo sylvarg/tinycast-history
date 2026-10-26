@@ -1,8 +1,9 @@
 name: "Personal · release"
 
-# Each official stable release is rebuilt from its exact tag with .personal/patches, tested, signed
-# with this edition's own identity and published here as v<official>-h.<revision>: the version the
-# in-app updater reads. A change to the patches publishes the next revision of the same base.
+# The only place the edition is compiled: each official stable release is rebuilt from its exact
+# tag with .personal/patches, tested, signed and published as v<official>-h.<revision>, the version
+# the in-app updater reads, and main then points at that build. A change to the patches publishes
+# the next revision of the same base.
 on:
   schedule:
     - cron: "17,47 * * * *"
@@ -121,6 +122,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: .personal/publish-release.sh
+
+      # main follows what is released; a hand-made push meanwhile wins, and the next release takes it.
+      - name: Point main at this release
+        if: steps.gate.outcome == 'success'
+        run: |
+          git push --force-with-lease="main:$MAIN" origin "$SOURCE:refs/heads/main" \
+            || echo "::notice::main moved during the release, so it keeps the newer commit"
 
       - name: Clear the blocked state
         if: success() && steps.gate.outcome == 'success'

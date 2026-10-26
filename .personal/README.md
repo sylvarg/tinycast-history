@@ -2,10 +2,12 @@
 
 Tout ce qui distingue [`sylvarg/tinycast-history`](https://github.com/sylvarg/tinycast-history) du
 projet original [`abue-ammar/tinycast`](https://github.com/abue-ammar/tinycast) tient dans ce dossier.
-**`main` est une branche générée** : `personal-sync.yml` la reconstruit comme *commit original +
-patches de ce dossier*, un commit par patch (titre tiré du nom du fichier, message tiré de sa ligne
-ci-dessous), puis un dernier commit (`personal: launcher history edition on upstream <sha>`) qui
-contient ce dossier, le README de l'édition et les réécritures. On ne modifie jamais le code de `main`
+**`main` est une branche générée** : à chaque release, `personal-release.yml` la fait pointer sur
+la source exacte de la version publiée — *tag officiel + patches de ce dossier*, un commit par patch
+(titre tiré du nom du fichier, message tiré de sa ligne ci-dessous), puis un dernier commit
+(`personal: Tinycast <version> (official <tag> <sha>)`) qui contient ce dossier, les README de
+l'édition et les réécritures. Entre deux releases, `main` peut porter des commits faits à la main sur
+ce dossier : la release suivante les reprend. On ne modifie jamais le code de `main`
 à la main : on modifie un patch (voir *Modifier un patch*).
 
 La mécanique reprend celle de [Tinycast Space](https://github.com/sermelipharo/tinycast-space)
@@ -74,17 +76,21 @@ l'édition est dans `docs/features/launcher-history.md` et ce fichier.
 
 ## Automatisation
 
-- **`personal-sync.yml`** — toutes les 10 minutes environ (cron, sans garantie de délai) et à la
-  demande. Linux : compare `main` d'origine à `UPSTREAM`, puis `check-apply.sh` ; un conflit est
-  enregistré dans `personal-status/sync.md` et s'arrête là, sans macOS. Sinon macOS 26 : reconstruit `main`,
-  `gate.sh`, puis `git push --force-with-lease=main:<ancien>` ; si `main` a bougé pendant la
-  construction (une modification humaine), le résultat est abandonné et le passage suivant repart du
-  nouvel état. Un échec n'est jamais annoncé comme une synchronisation.
+**La seule compilation a lieu au moment d'une release** (choix de l'utilisateur : la branche de
+développement d'origine n'est jamais livrée telle quelle).
+
+- **`personal-sync.yml`** (« patch check ») — une fois par jour (06:23 UTC, sans garantie de délai)
+  et à la demande, sur Linux, **sans compiler** : `check-apply.sh` vérifie que les patches
+  s'appliquent encore à `main` d'origine. Il prévient tôt d'un conflit (`personal-status/sync.md`,
+  un mail par cause) et ne publie rien.
 - **`personal-release.yml`** — aux minutes 17 et 47 de chaque heure et à la demande (tag optionnel).
-  Linux : `release-plan.sh`. macOS : patches sur le tag officiel exact, `gate.sh`, build signé,
-  publication `v<officiel>-h.<N>`. Une release est refaite seulement si le **contenu** change (le
-  re-découpage des patches par la synchro ne compte pas). Un échec laisse la dernière release saine
-  en place et l'enregistre dans `personal-status/release.md`.
+  Linux : `release-plan.sh`, qui ne déclenche une construction que pour une **nouvelle release stable
+  officielle** ou un **contenu livré différent** de toutes les releases publiées (code, ressources,
+  tests ; les README, la documentation, les workflows et le projet Xcode régénéré ne comptent pas).
+  macOS : patches sur le tag officiel exact, `gate.sh`, build signé, publication
+  `v<officiel>-h.<N>`, puis `main` pointe sur cette source (`--force-with-lease` : une modification
+  faite à la main pendant la release est gardée). Un échec laisse la dernière release saine en place
+  et l'enregistre dans `personal-status/release.md`.
 - **`personal-ci.yml`** — `gate.sh` sur toute poussée vers `claude/**` ou `personal/**`.
 
 ### Secrets (Settings › Secrets and variables › Actions)
@@ -102,13 +108,13 @@ de l'utilisateur et n'en sortent pas. Voir [`SIGNING.md`](SIGNING.md) pour l'ide
 
 - **Mail de GitHub** : un run en échec envoie le mail « Run failed » au compte qui a lancé ou programmé
   le workflow. Comme `report.sh` ne fait échouer le run que pour une **cause nouvelle**, un blocage qui
-  persiste n'envoie pas un mail toutes les 10 minutes. Réglage : *GitHub › Settings › Notifications
+  persiste n'envoie pas un mail à chaque passage. Réglage : *GitHub › Settings › Notifications
   › Actions* (« Only notify for failed workflows »).
-- **Branche `personal-status`** : tant qu'un blocage existe, `sync.md` ou `release.md` contient son
-  titre (`… blocked: upstream <sha> + main <sha>`), le lien vers le run et, pour un conflit, le patch,
+- **Branche `personal-status`** : tant qu'un blocage existe, `sync.md` (conflit de patch) ou
+  `release.md` (release bloquée) contient son titre, le lien vers le run et, pour un conflit, le patch,
   les fichiers et les commits d'origine qui les ont touchés depuis le dernier `UPSTREAM` ; pour un échec
   de build ou de test, les contrôles en échec et les premières erreurs. Le fichier disparaît au premier
-  passage réussi. La même combinaison n'est pas retentée tant qu'elle est enregistrée.
+  passage réussi. Une release bloquée n'est pas retentée sur la même combinaison tag + `main`.
 - **Résumé du run** (onglet *Actions*) : le même diagnostic.
 - **Onglet Actions** : l'historique des runs ; un run vert « avec avertissement » signale un blocage
   déjà connu.
@@ -125,8 +131,8 @@ git diff --full-index <commit>~1 <commit> -- . ':!Tinycast.xcodeproj' > .persona
 git switch main && git checkout fix -- .personal && git commit -m "…" && git push
 ```
 
-La synchro suivante reconstruit `main` avec le patch modifié ; la release suivante publie la
-révision `-h.N+1` du même socle. Règles : nouveau code dans de nouveaux fichiers, raccordements d'une
+La release suivante (dans la demi-heure) compile, teste et publie la révision `-h.N+1` du même
+socle, puis aligne `main` sur elle. Règles : nouveau code dans de nouveaux fichiers, raccordements d'une
 ligne, ajouter plutôt que réécrire, jamais de patch sur `project.pbxproj` ni sur un fichier généré.
 
 ## Intégrer une nouvelle release officielle
@@ -139,7 +145,7 @@ depuis le tag. En cas de conflit (mail, `personal-status/sync.md`) :
    **retirer** le patch ou sa partie devenue inutile, en gardant la lecture des données existantes
    (fichiers `.enc`, clés) et en documentant la migration ; ne jamais garder deux implémentations.
 3. Sinon refaire le raccordement sur le nouveau code (voir *Modifier un patch*), pousser sur `main`.
-4. Vérifier que `personal-sync` puis `personal-release` passent ; l'état de blocage s'efface seul.
+4. Vérifier que le patch check et `personal-release` passent ; l'état de blocage s'efface seul.
 
 ## Numérotation et mises à jour
 

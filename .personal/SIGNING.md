@@ -50,9 +50,9 @@ installe sa propre identité du même nom ; n'en gardez qu'une.
 `PERSONAL_PUSH_TOKEN` : *Settings › Developer settings › Personal access tokens › Fine-grained tokens*,
 **Repository access : Only select repositories → sylvarg/tinycast-history**, permissions
 **Contents : Read and write** et **Workflows : Read and write** (aucune autre). Il sert uniquement à
-pousser `main` régénérée et les tags de release, qui contiennent des modifications de
+pousser les tags de release et `main` alignée sur eux, qui contiennent des modifications de
 `.github/workflows` que le `GITHUB_TOKEN` n'a pas le droit de pousser. Expiration recommandée : 1 an,
-à renouveler (à l'expiration, la synchro échoue avec une erreur d'authentification et GitHub vous envoie le mail d'échec).
+à renouveler (à l'expiration, la release suivante échoue avec une erreur d'authentification et GitHub vous envoie le mail d'échec).
 
 ## Si un secret est perdu
 

@@ -18,8 +18,19 @@ wt="$(mktemp -d)"
 git worktree add -q --detach "$wt" "refs/upstream-tags/$tag"
 trap 'git worktree remove --force "$wt"' EXIT
 cp -R .personal "$wt/"
-(cd "$wt" && .personal/apply.sh > /dev/null && rm -rf .personal && git add -A)
-content="$(git -C "$wt" write-tree)"
+(cd "$wt" && .personal/apply.sh > /dev/null && git add -A)
+# What ships, as a tree: a README, doc or workflow edit never earns a new app version, and the Xcode
+# project only differs by being regenerated on macOS.
+shipped() {
+  local index
+  index="$(mktemp)"
+  GIT_INDEX_FILE="$index" git read-tree "$1"
+  GIT_INDEX_FILE="$index" git rm -r -q -f --cached --ignore-unmatch -- \
+    .personal .github docs README.md README.fr.md README.upstream.md Tinycast.xcodeproj
+  GIT_INDEX_FILE="$index" git write-tree
+  rm -f "$index"
+}
+content="$(shipped "$(git -C "$wt" write-tree)")"
 
 head="$(git rev-parse --short=7 HEAD)"
 if [ -z "$requested" ] && .personal/report.sh blocked release "Release blocked: $tag + main $head"; then
@@ -29,7 +40,8 @@ fi
 published="$(gh release list -R "$REPO" --limit 200 --json tagName,isDraft \
   -q ".[] | select(.isDraft == false) | .tagName" | grep -E "^v${base//./\\.}-h\.[0-9]+$" || true)"
 for existing in $published; do
-  if gh release view "$existing" -R "$REPO" --json body -q .body | grep -qF "<!-- personal-content: $content -->"; then
+  git fetch -q --no-tags origin "refs/tags/$existing:refs/tags/$existing"
+  if [ "$(shipped "$existing^{tree}")" = "$content" ]; then
     echo "::notice::$existing already ships this content on $tag" >&2
     echo "tag="; exit 0
   fi

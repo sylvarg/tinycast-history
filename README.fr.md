@@ -80,9 +80,10 @@ en clair.
 ## Construction et maintenance
 
 Tout est construit et testé par GitHub Actions sur macOS ; aucun Xcode local n'est nécessaire.
-`main` est **générée automatiquement** : *commit officiel + patches de [`.personal/`](.personal/README.md)*.
-La synchronisation suit la branche officielle environ toutes les 10 minutes ; chaque release stable
-officielle est reconstruite depuis son tag exact, testée, signée et publiée ici. Maintenance,
+L'app n'est compilée qu'au moment d'une release : chaque release stable officielle est reconstruite
+depuis son tag exact avec les patches de [`.personal/`](.personal/README.md), testée, signée et publiée
+ici, puis `main` pointe sur cette source. Une vérification quotidienne, sans compilation, prévient tôt
+si les patches ne s'appliquent plus à la branche de développement officielle. Maintenance,
 inventaire des modifications du code original et diagnostics : [`.personal/README.md`](.personal/README.md).
 Signature : [`.personal/SIGNING.md`](.personal/SIGNING.md). README original : [README.upstream.md](README.upstream.md).
 
@@ -91,5 +92,5 @@ Signature : [`.personal/SIGNING.md`](.personal/SIGNING.md). README original : [R
 Tinycast est © Abue Ammar et ses contributeurs, sous licence **AGPL-3.0** ([LICENSE](LICENSE),
 [NOTICE.md](NOTICE.md)) ; cette édition et ses modifications sont publiées sous la même licence, avec
 le code source complet de chaque version (tag `v<version>` et dossier `.personal/patches`). La
-mécanique de synchronisation et de publication s'inspire de [Tinycast Space](https://github.com/sermelipharo/tinycast-space)
+mécanique de patches et de publication s'inspire de [Tinycast Space](https://github.com/sermelipharo/tinycast-space)
 de sermelipharo ; aucune de ses fonctionnalités n'est reprise.
