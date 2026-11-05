@@ -1,0 +1,44 @@
+name: "Personal · patch check"
+
+# Once a day, on Linux and without compiling: do the patches still apply to upstream's main? It only
+# warns early of a conflict; compiling, testing and updating main happen in personal-release.yml.
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: personal-sync
+  cancel-in-progress: false
+
+# Writes only the personal-status branch.
+permissions:
+  contents: write
+
+env:
+  UPSTREAM: https://github.com/abue-ammar/tinycast.git
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # A conflict alerts once per cause (report.sh); the same one on later days stays quiet.
+      - name: Apply the patches to upstream main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags "$UPSTREAM" main
+          UP=$(git rev-parse FETCH_HEAD)
+          if cause=$(.personal/check-apply.sh "$UP" "$(cat .personal/UPSTREAM 2>/dev/null || true)" "$RUNNER_TEMP/conflict.md"); then
+            echo "patches apply to upstream ${UP:0:7}"
+            .personal/report.sh close sync
+            exit 0
+          fi
+          [ -n "$cause" ] || exit 1
+          .personal/report.sh open sync "Patches no longer apply to upstream ${UP:0:7}" "$RUNNER_TEMP/conflict.md" "$cause"
