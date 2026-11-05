@@ -1,0 +1,121 @@
+#!/bin/bash
+# Build + tests, as the sync, the release and the branch CI run them. Every personal check is
+# blocking. An upstream harness may fail only if it also fails on the pristine upstream commit.
+# Usage: .personal/gate.sh <upstream-sha> [--release]
+set -uo pipefail
+UP="${1:?upstream sha}"
+cd "$(git rev-parse --show-toplevel)" || exit 2
+TMP="${RUNNER_TEMP:-$(mktemp -d)}"
+failures=()
+
+step() { echo "::group::$1"; }
+done_step() { echo "::endgroup::"; }
+
+step "xcodegen"
+xcodegen generate --quiet || { echo "::error::xcodegen failed"; exit 1; }
+done_step
+
+step "Debug build"
+xcodebuild -project Tinycast.xcodeproj -scheme Tinycast -configuration Debug \
+  -derivedDataPath "$TMP/gate-dd" CODE_SIGNING_ALLOWED=NO build > "$TMP/gate-build.log" 2>&1
+build=$?
+done_step
+# Upstream builds without a single warning in its own sources, so any warning here is new.
+warnings=$(grep -E '^/.*/Tinycast/.*: warning: ' "$TMP/gate-build.log" | sort -u)
+# The block's cause: the failed checks, plus the first errors with paths and lines stripped.
+report() { # failed-checks details-file
+  local errors
+  errors=$(grep -E 'error|FAIL' "$2" 2> /dev/null | sed -E 's#^/[^:]*/##; s#:[0-9]+:[0-9]+:#:#' | head -5)
+  printf '%s %s' "$1" "$(printf '%s' "$errors" | shasum | cut -c1-12)" > "$TMP/gate-cause.txt"
+  { echo "Failed checks: \`$1\`"; echo; echo '```'; head -80 "$2" 2> /dev/null; echo '```'; } > "$TMP/gate-report.md"
+}
+
+if [ $build -ne 0 ]; then
+  grep -E ': error: ' "$TMP/gate-build.log" | sort -u | head -60 | tee "$TMP/gate-errors.txt"
+  tail -40 "$TMP/gate-build.log"
+  # Upstream sometimes builds only with a newer Xcode than the runners have: say whose break it is.
+  step "Pristine upstream build"
+  wt="$TMP/gate-pristine-build"
+  git worktree add --force --detach "$wt" "$UP" > /dev/null
+  (cd "$wt" && xcodegen generate --quiet && xcodebuild -project Tinycast.xcodeproj -scheme Tinycast \
+    -configuration Debug -derivedDataPath "$TMP/gate-pristine-dd" CODE_SIGNING_ALLOWED=NO build) \
+    > "$TMP/gate-pristine.log" 2>&1
+  pristine=$?
+  git worktree remove --force "$wt"
+  done_step
+  xcode="$(xcodebuild -version | head -1)"
+  if [ $pristine -ne 0 ]; then
+    { echo "Upstream ${UP:0:7} does not build on its own either with $xcode, so this is upstream's"
+      echo "break, not this edition's: the sync waits for upstream to fix it."; echo
+      cat "$TMP/gate-errors.txt"; } > "$TMP/gate-upstream-errors.txt"
+    report upstream-build-broken "$TMP/gate-upstream-errors.txt"
+    echo "::error::upstream ${UP:0:7} does not build with $xcode even without this edition's patches"
+  else
+    report build "$TMP/gate-errors.txt"
+    echo "::error::the Debug build failed, and pristine upstream ${UP:0:7} builds: the patches need work"
+  fi
+  exit 1
+fi
+if [ -n "$warnings" ]; then echo "$warnings"; echo "::error::the build has warnings"; failures+=(warnings); fi
+
+step "Lint"
+./Scripts/lint.sh 2>&1 | tee "$TMP/gate-lint.log"
+[ "${PIPESTATUS[0]}" -eq 0 ] || failures+=(lint)
+# Upstream tolerates lint warnings; none may point at a file this edition adds or changes.
+ours=$(git diff --name-only "$UP" -- '*.swift'; git ls-files --others --exclude-standard -- '*.swift')
+for file in $ours; do
+  grep -F "/$file:" "$TMP/gate-lint.log" | grep -F "warning:" && failures+=("lint-warning:$file")
+done
+done_step
+
+step "Personal checks"
+.personal/tests/keychain-sandbox.sh .personal/tests/run.sh 2>&1 | tee "$TMP/gate-personal.log"
+[ "${PIPESTATUS[0]}" -eq 0 ] || failures+=(personal-checks)
+done_step
+
+step "Signing and Keychain checks"
+.personal/tests/signing.sh 2>&1 | tee "$TMP/gate-signing.log"
+[ "${PIPESTATUS[0]}" -eq 0 ] || failures+=(signing-checks)
+done_step
+
+step "Upstream harnesses"
+./Scripts/run-tests.sh > "$TMP/gate-tests.log" 2>&1
+upstream=$?
+done_step
+# Every line but a passing harness, so a runner-level failure shows what the runner printed.
+sed 's/\x1b\[[0-9;]*m//g' "$TMP/gate-tests.log" | grep -vE '^\[ *[0-9]+/[0-9]+\] ok ' | tail -80
+# The FAIL lines too: a crashing harness breaks the runner's own count, and with it its summary.
+failed=$(sed 's/\x1b\[[0-9;]*m//g' "$TMP/gate-tests.log" \
+  | sed -nE 's/.*harness\(es\) failed in [0-9]+s: //p; s/^\[ *[0-9]+\/[0-9]+\] FAIL +([a-z0-9-]+) .*/\1/p' \
+  | tr ' ' '\n' | sed '/^$/d' | sort -u | paste -sd' ' -)
+if [ $upstream -ne 0 ] && [ -z "$failed" ]; then
+  echo "::error::run-tests.sh failed without naming a harness"; failures+=(upstream-runner)
+fi
+regressions=()
+if [ -n "$failed" ]; then
+  wt="$TMP/gate-upstream"
+  git worktree add --force --detach "$wt" "$UP" > /dev/null || exit 2
+  for t in $failed; do
+    # Upstream's timing-based harnesses miss on a loaded runner: blame this edition only for a
+    # harness that fails every retry here and passes every run on the pristine upstream commit.
+    ours=0
+    for _ in 1 2 3; do ./Scripts/run-tests.sh "$t" > /dev/null 2>&1 && { ours=1; break; }; done
+    if [ $ours = 1 ]; then echo "::warning::$t is flaky: failed in the full run, passed on a retry"; continue; fi
+    pristine=1
+    for _ in 1 2 3; do (cd "$wt" && ./Scripts/run-tests.sh "$t" > /dev/null 2>&1) || { pristine=0; break; }; done
+    if [ $pristine = 1 ]; then regressions+=("$t"); else
+      echo "::warning::$t fails on pristine upstream ${UP:0:7} too — upstream's, not this edition's"
+    fi
+  done
+  git worktree remove --force "$wt"
+fi
+[ ${#regressions[@]} -eq 0 ] || { echo "::error::upstream harnesses broken: ${regressions[*]}"; failures+=(upstream-regressions); }
+
+if [ ${#failures[@]} -gt 0 ]; then
+  { echo "$warnings"; grep -hE '^FAIL|error' "$TMP/gate-lint.log" "$TMP/gate-personal.log" "$TMP/gate-signing.log" 2> /dev/null
+    printf '%s\n' "${regressions[@]:-}"; } > "$TMP/gate-errors.txt"
+  report "${failures[*]}" "$TMP/gate-errors.txt"
+  echo "::error::gate failed: ${failures[*]}"
+  exit 1
+fi
+echo "gate passed"
