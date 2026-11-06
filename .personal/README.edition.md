@@ -67,9 +67,9 @@ encrypted files).
    personal revision.
 
 **Updates**: once a day (*Automatically check for updates*, on by default) or through *Check for
-Updates*, the app reads **this repository's** releases and offers the new version in a window; once
-you accept, it downloads it, verifies the identifier, the version and the signature (the same
-certificate as the installed app), installs it and relaunches. On the first launch of a new version,
+Updates*, the app reads **this repository's** releases and offers the new version; once you accept,
+it downloads it, verifies the version and the signature (the same identifier and certificate as the
+installed app; never the original project's release key or Apple team) and installs it. On the first launch of a new version,
 macOS asks **once** for access to the `com.tinycast.app.sealed-storage-keys` keychain item: answer
 *Always Allow* (with your login password). That is the cost of a self-signed app: macOS ties each
 keychain item to the exact build that created it. `0.12.1-h.2` corrects `0.12.1-h.1`;

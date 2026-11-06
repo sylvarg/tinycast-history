@@ -1,5 +1,5 @@
 diff --git a/Tinycast/App/AppCore.swift b/Tinycast/App/AppCore.swift
-index 6af5eefc1274ca2cd7d32c48f4d6d701b1861b02..244e1cb61e7e39ff870de0c886f082b7a52a65f5 100644
+index ea9ef49cee584a8cde2a7d8df46259325f079fd8..0777dca97461ca1346e8a5379d3640037390f3c0 100644
 --- a/Tinycast/App/AppCore.swift
 +++ b/Tinycast/App/AppCore.swift
 @@ -259,7 +259,7 @@ final class AppCore {

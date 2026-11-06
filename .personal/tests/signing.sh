@@ -66,21 +66,25 @@ grep -qa probe-secret "$W/data/probe.enc" && fail "the sealed file holds plainte
 [ "$(probe "$W/probe-v1" keychain read "$W/data")" = absent ] && pass "after erase nothing is left" \
   || fail "after erase nothing is left"
 
-bundle() { # name identity
+bundle() { # name identity [bundle id]
   local app="$W/$1.app"
   mkdir -p "$app/Contents/MacOS"
   cp /usr/bin/true "$app/Contents/MacOS/Tinycast"
-  /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.tinycast.app" \
+  /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string ${3:-com.tinycast.probe}" \
     -c "Add :CFBundleExecutable string Tinycast" -c "Add :CFBundleShortVersionString string 0.12.1-h.1" \
     "$app/Contents/Info.plist" > /dev/null
   codesign -f -s "Tinycast Probe $2" --keychain "$KC" "$app" 2> /dev/null
 }
 bundle Ours A
 bundle Foreign B
+bundle Renamed A com.example.other
 [ "$(probe "$W/probe-v1" trust "$W/Ours.app")" = trusted ] && pass "the updater trusts its own signature" \
   || fail "the updater trusts its own signature"
 [ "$(probe "$W/probe-v1" trust "$W/Foreign.app")" = refused ] && pass "the updater refuses a foreign signature" \
   || fail "the updater refuses a foreign signature"
+[ "$(probe "$W/probe-v1" trust "$W/Renamed.app")" = refused ] \
+  && pass "the updater refuses its own certificate on another identifier" \
+  || fail "the updater refuses its own certificate on another identifier"
 [ "$(probe "$W/probe-v1" trust /System/Applications/Calculator.app)" = refused ] \
   && pass "the updater refuses an Apple-chained bundle that is not this edition" \
   || fail "the updater refuses an Apple-chained bundle that is not this edition"

@@ -1,5 +1,5 @@
 diff --git a/Tinycast/App/AppCore.swift b/Tinycast/App/AppCore.swift
-index 244e1cb61e7e39ff870de0c886f082b7a52a65f5..9ddd5b25d08b2b9da698fdaf1cba71cabd726e3c 100644
+index 0777dca97461ca1346e8a5379d3640037390f3c0..63cb665c6ec7f7f970b3aa8cfcb792757f2fa00d 100644
 --- a/Tinycast/App/AppCore.swift
 +++ b/Tinycast/App/AppCore.swift
 @@ -199,6 +199,8 @@ final class AppCore {
@@ -11,7 +11,7 @@ index 244e1cb61e7e39ff870de0c886f082b7a52a65f5..9ddd5b25d08b2b9da698fdaf1cba71ca
      @ObservationIgnored private(set) lazy var calculatorCoordinator = CalculatorCoordinator(
          calcHistory: calcHistory, paletteCoordinator: paletteCoordinator, core: self)
      @ObservationIgnored private(set) lazy var calendarCoordinator = CalendarCoordinator(
-@@ -299,6 +301,7 @@ final class AppCore {
+@@ -298,6 +300,7 @@ final class AppCore {
              }
  
              appIndex.start(settings: settings)
@@ -19,7 +19,7 @@ index 244e1cb61e7e39ff870de0c886f082b7a52a65f5..9ddd5b25d08b2b9da698fdaf1cba71ca
              clipboardCoordinator.applyEnabled()
              extensions.start(appIndex: appIndex, coordinator: extensionCoordinator)
              extensionCoordinator.applyEnabled()
-@@ -598,6 +601,7 @@ final class AppCore {
+@@ -609,6 +612,7 @@ final class AppCore {
      }
  
      func prepareForTermination() {
@@ -27,7 +27,7 @@ index 244e1cb61e7e39ff870de0c886f082b7a52a65f5..9ddd5b25d08b2b9da698fdaf1cba71ca
          if settings.dictationEnabled { dictationCoordinator.prepareForTermination() }
          settingsFile?.flush()
          clipboardTextIndexer?.stop()
-@@ -963,9 +967,12 @@ final class AppCore {
+@@ -975,9 +979,12 @@ final class AppCore {
          tone: DialogTone = .danger, confirmRole: DialogAction.Role = .destructive,
          dismissTitle: String = String(localized: "Cancel")
      ) async -> Bool {
@@ -41,7 +41,7 @@ index 244e1cb61e7e39ff870de0c886f082b7a52a65f5..9ddd5b25d08b2b9da698fdaf1cba71ca
      }
  
      /// A question with more than two answers; the returned index is into `options`.
-@@ -1003,7 +1010,10 @@ final class AppCore {
+@@ -1015,7 +1022,10 @@ final class AppCore {
      }
  
      func pickVolume(current: Float32) async -> Float32? {
@@ -767,7 +767,7 @@ index 0000000000000000000000000000000000000000..16f8e881c2de0b8d2ce1f27572c368f2
 +    }
 +}
 diff --git a/Tinycast/Palette/RootPaletteView.swift b/Tinycast/Palette/RootPaletteView.swift
-index b20b314842735fb162654c0a57a597a61bf867c2..e918154f0003f96fb1502198002b1b8c9430cd49 100644
+index 789e0fefb33c5510fab6c10620d61edf0c108b8e..fbbe73643dcda138691465d590656267ecbd6ea4 100644
 --- a/Tinycast/Palette/RootPaletteView.swift
 +++ b/Tinycast/Palette/RootPaletteView.swift
 @@ -538,6 +538,9 @@ struct RootPaletteView: View {
@@ -780,7 +780,7 @@ index b20b314842735fb162654c0a57a597a61bf867c2..e918154f0003f96fb1502198002b1b8c
                  if isCollapsed { return .ignored }
                  if menuOpen {
                      moveMenu(-1)
-@@ -1412,6 +1415,7 @@ struct RootPaletteView: View {
+@@ -1417,6 +1420,7 @@ struct RootPaletteView: View {
      private func activateMenuItem(_ index: Int) {
          guard let content = menuContent, (0..<content.rowCount).contains(index) else { return }
          guard content.isSelectable(index) else { return }

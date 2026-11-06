@@ -429,10 +429,10 @@ index 0000000000000000000000000000000000000000..aa3232745abbb72eebbb8cc279c21d20
 +}
 diff --git a/Tests/personal-signature-probe.swift b/Tests/personal-signature-probe.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..65d99a220579402507274f1b919dddd3ddd0869e
+index 0000000000000000000000000000000000000000..84e86cf53c0a5a67547ae76f6d2d912ee62d3b61
 --- /dev/null
 +++ b/Tests/personal-signature-probe.swift
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,42 @@
 +import Foundation
 +
 +/// Signed by `.personal/tests/signing.sh` to answer as the app would: bundle trust, Keychain.
@@ -443,7 +443,9 @@ index 0000000000000000000000000000000000000000..65d99a220579402507274f1b919dddd3
 +        guard arguments.count >= 3 else { fail("usage: trust <bundle> | keychain <write|read> <dir>") }
 +        switch (arguments[1], arguments[2]) {
 +        case ("trust", let path):
-+            print(BundleSignature.isTrusted(URL(fileURLWithPath: path)) ? "trusted" : "refused")
++            // The widest case: even a release-signed bundle must carry this edition's identity.
++            let hash = BundleSignature.trustedHash(of: URL(fileURLWithPath: path), releaseSigned: true)
++            print(hash != nil ? "trusted" : "refused")
 +        case ("keychain", let mode) where arguments.count == 4:
 +            let file = SealedFile(
 +                name: "probe.enc", account: UUID(uuidString: "0B5E0A6E-1C2D-4E3F-8A9B-0C1D2E3F4A5B")!,

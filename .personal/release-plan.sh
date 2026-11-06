@@ -21,10 +21,17 @@ if [ -z "$requested" ] && .personal/report.sh blocked release "$title"; then
 fi
 
 git fetch -q --no-tags "$UPSTREAM" "refs/tags/$tag:refs/upstream-tags/$tag"
+published="$(gh release list -R "$REPO" --limit 200 --json tagName,isDraft \
+  -q ".[] | select(.isDraft == false) | .tagName" | grep -E "^v${base//./\\.}-h\.[0-9]+$" || true)"
 # A conflict is reported like a failed build: one alert per cause, then quiet until main changes.
 report="$(mktemp)"
 if ! conflict="$(.personal/check-apply.sh "refs/upstream-tags/$tag" "$(cat .personal/UPSTREAM)" "$report")"; then
   echo "tag="
+  # Patches follow upstream main, so they may outgrow a tag that is already released.
+  if [ -n "$published" ]; then
+    echo "::notice::the patches no longer apply to $tag, already shipped as $(echo $published | tr ' ' '\n' | sort -V | tail -n1); the next official release takes them" >&2
+    exit 0
+  fi
   .personal/report.sh open release "$title" "$report" "conflict on $tag: $conflict" >&2
   exit 0
 fi
@@ -46,8 +53,6 @@ shipped() {
 }
 content="$(shipped "$(git -C "$wt" write-tree)")"
 
-published="$(gh release list -R "$REPO" --limit 200 --json tagName,isDraft \
-  -q ".[] | select(.isDraft == false) | .tagName" | grep -E "^v${base//./\\.}-h\.[0-9]+$" || true)"
 for existing in $published; do
   git fetch -q --no-tags origin "refs/tags/$existing:refs/tags/$existing"
   if [ "$(shipped "$existing^{tree}")" = "$content" ]; then

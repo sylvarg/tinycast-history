@@ -26,7 +26,7 @@ if grep -rn '"calculator-history.json"\|"launcher-ranking.json"' Tinycast --incl
   | grep -v 'legacyName:\|LauncherRankingStore.swift:.*appendingPathComponent'; then
   echo "a sealed store's legacy file name is used outside its migration"; status=1
 fi
-need Tinycast/Features/Updates/Service/BundleSignature.swift "return running == candidate"
-grep -q 'developerID as CFString' Tinycast/Features/Updates/Service/BundleSignature.swift \
+need Tinycast/Features/Updates/Service/BundleSignature.swift "let requirement = runningRequirement,"
+grep -q 'compiled(developerID)' Tinycast/Features/Updates/Service/BundleSignature.swift \
   && { echo "upstream's Developer ID team is still trusted by the updater"; status=1; }
 exit $status

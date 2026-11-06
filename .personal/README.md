@@ -65,7 +65,7 @@ est dans des fichiers nouveaux. `tests/check-hooks.sh` échoue si un raccordemen
 | `Platform/KeychainSecretStore.swift` | 1 portée `sealed-storage-keys` | La liste unique des portées du trousseau | Faible |
 | `Features/Updates/Model/AppVersion.swift` | `revision` (`-h.N`) | Corrections personnelles entre deux releases officielles | Moyen |
 | `Features/Updates/Model/ReleaseFeed.swift` | dépôt | Mises à jour depuis ce dépôt | Faible |
-| `Features/Updates/Service/BundleSignature.swift` | `isTrusted` compare le certificat feuille de la build à celui de l'app en cours (`runningLeaf`, `leaf(of:)`) au lieu de l'exigence Developer ID | Ne jamais accepter une build signée par l'équipe du projet original ; la constante `developerID` reste car `updates-test` d'origine la compile | Moyen (l'original a réécrit ce fichier en 0.12.8) |
+| `Features/Updates/Service/BundleSignature.swift` | `trustedHash` exige toujours l'exigence désignée de l'app en cours (`runningRequirement` : identifiant + certificat), jamais la clé de release de l'original ni son équipe Developer ID (1 ligne + commentaire) | Ne jamais accepter une build signée par l'équipe du projet original ; la constante `developerID` reste car `updates-test` d'origine la compile | Moyen (l'original a réécrit ce fichier en 0.12.8 puis après) |
 | `Windows/About/AboutView.swift` | 1 ligne `PersonalEditionSection()` | Mention de l'édition | Faible |
 | Réécritures (`apply.sh`) | lien *Changelog*, workflows d'origine supprimés, README | Pas de hunk : une ligne déplacée en amont ne crée pas de conflit | — |
 
@@ -92,7 +92,9 @@ développement d'origine n'est jamais livrée telle quelle).
   `v<officiel>-h.<N>`, puis `main` pointe sur cette source (`--force-with-lease` : une modification
   faite à la main pendant la release est gardée). Un échec laisse la dernière release saine en place
   et l'enregistre dans `personal-status/release.md` ; un patch qui ne s'applique plus au nouveau tag
-  y est signalé de la même façon, avant tout runner macOS.
+  y est signalé de la même façon, avant tout runner macOS. Exception : les patches suivent `main`
+  d'origine, donc ils peuvent ne plus s'appliquer à un tag **déjà publié** ; ce n'est alors qu'une
+  note dans le run, et la release officielle suivante les reprend.
 - **`personal-ci.yml`** — `gate.sh` sur toute poussée vers `claude/**` ou `personal/**`.
 
 Les jobs macOS tournent sur l'image GitHub `xcode-27` (comme les releases de l'original depuis 0.12.8,

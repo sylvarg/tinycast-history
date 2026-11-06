@@ -69,8 +69,9 @@ repartent vides (elle ne lit pas les fichiers chiffrés).
 
 **Mises à jour** : une fois par jour (réglage *Vérifier automatiquement les mises à jour*, actif par
 défaut) ou via *Check for Updates*, l'application consulte les releases de **ce dépôt** et propose la
-nouvelle version dans une fenêtre ; après votre accord, elle la télécharge, vérifie l'identifiant, la
-version et la signature (certificat identique à celui de l'app installée), l'installe et redémarre. Au premier lancement d'une nouvelle version, macOS demande **une fois**
+nouvelle version ; après votre accord, elle la télécharge, vérifie la version et la signature (même
+identifiant et même certificat que l'app installée ; jamais la clé de release ni l'équipe Apple du
+projet original) et l'installe. Au premier lancement d'une nouvelle version, macOS demande **une fois**
 l'accès à l'élément `com.tinycast.app.sealed-storage-keys` du trousseau : répondez « Toujours
 autoriser » (avec le mot de passe de session). C'est le prix d'une signature auto-signée : macOS lie
 chaque élément du trousseau au build exact qui l'a créé. Une version `0.12.1-h.2` corrige `0.12.1-h.1` ; la release officielle suivante arrive
