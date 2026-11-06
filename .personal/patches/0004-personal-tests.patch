@@ -335,7 +335,7 @@ index 0000000000000000000000000000000000000000..07686bc09c46602a9066c10619a5f5fc
 +}
 diff --git a/Tests/personal-edition-test.swift b/Tests/personal-edition-test.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..aa3232745abbb72eebbb8cc279c21d20bdb3a19b
+index 0000000000000000000000000000000000000000..6641b02820af33755d62c5247212e2bfff64aa34
 --- /dev/null
 +++ b/Tests/personal-edition-test.swift
 @@ -0,0 +1,88 @@
@@ -414,7 +414,7 @@ index 0000000000000000000000000000000000000000..aa3232745abbb72eebbb8cc279c21d20
 +        expect(newest?.tag == "v0.12.1-h.2", "the stable channel takes the newest revision, never a beta")
 +        expect(newest?.assetURL.lastPathComponent == "Tinycast.zip", "and installs the zip, not the DMG")
 +        let offered = { (running: String) in
-+            ReleaseFeed.offer(newest, running: version(running), skipped: nil)?.tag
++            ReleaseFeed.offer(newest, running: version(running))?.tag
 +        }
 +        expect(offered("0.12.1-h.1") == "v0.12.1-h.2", "a correction is offered over the revision before")
 +        expect(offered("0.12.1") == "v0.12.1-h.2", "the official build is offered this edition's revision")
