@@ -16,7 +16,7 @@ struct CalcHistoryEntry: Identifiable, Codable, Hashable, Sendable {
 final class CalculatorHistoryStore {
     private static let cap = 200
 
-    private let fileURL: URL
+    private let file: SealedFile
 
     private(set) var entries: [CalcHistoryEntry]  // newest first
 
@@ -30,10 +30,10 @@ final class CalculatorHistoryStore {
     /// Bumped on every persisted mutation, so the key above names the entries it filtered.
     private var revision = 0
 
-    init() {
-        fileURL = AppPaths.applicationSupport().appendingPathComponent("calculator-history.json")
+    init(file: SealedFile = .calculatorHistory) {
+        self.file = file
 
-        if let data = try? Data(contentsOf: fileURL),
+        if let data = try? file.read(),
             let decoded = try? JSONDecoder().decode([CalcHistoryEntry].self, from: data)
         {
             entries = decoded
@@ -84,7 +84,7 @@ final class CalculatorHistoryStore {
     private func persist() {
         revision &+= 1
         if let data = try? JSONEncoder().encode(entries) {
-            try? data.write(to: fileURL, options: .atomic)
+            try? file.write(data)
         }
     }
 }

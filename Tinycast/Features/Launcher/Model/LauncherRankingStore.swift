@@ -33,8 +33,12 @@ final class LauncherRankingStore {
     /// Caps pasted input, so one visit cannot store a paragraph as a term.
     private static let queryLimit = 64
 
+    /// Reads and writes the encoded table in place of `fileURL`, as a sealed file does.
+    typealias Persistence = (load: @Sendable () -> Data?, save: @Sendable (Data) -> Void)
+
     private let fileURL: URL
     private let now: () -> Date
+    private let persistence: Persistence?
 
     private(set) var visits: [String: LauncherVisit]
     /// Part of `AppIndex`'s cache key, invalidating a result after a visit or a reset.
@@ -43,12 +47,20 @@ final class LauncherRankingStore {
     /// The in-flight persist, awaited by the next one so a burst can't land out of order.
     @ObservationIgnored private var writeTask: Task<Void, Never>?
 
-    init(fileURL: URL? = nil, now: @escaping () -> Date = Date.init) {
+    init(
+        fileURL: URL? = nil, now: @escaping () -> Date = Date.init, persistence: Persistence? = nil
+    ) {
         self.fileURL = fileURL ?? Self.defaultFileURL()
         self.now = now
+        self.persistence = persistence
+        let stored: Data?
+        if let persistence {
+            stored = persistence.load()
+        } else {
+            stored = try? Data(contentsOf: self.fileURL)
+        }
         let decoded =
-            (try? Data(contentsOf: self.fileURL))
-            .flatMap { try? JSONDecoder().decode([String: LauncherVisit].self, from: $0) } ?? [:]
+            stored.flatMap { try? JSONDecoder().decode([String: LauncherVisit].self, from: $0) } ?? [:]
         visits = Self.live(decoded, at: now())
     }
 
@@ -146,10 +158,12 @@ final class LauncherRankingStore {
         // Off-main: this lands on ↵, in front of the launch. Chained, so writes stay ordered.
         let snapshot = visits
         let fileURL = fileURL
+        let persistence = persistence
         let previous = writeTask
         writeTask = Task.detached(priority: .utility) {
             await previous?.value
             guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            if let persistence { return persistence.save(data) }
             try? data.write(to: fileURL, options: .atomic)
         }
     }
