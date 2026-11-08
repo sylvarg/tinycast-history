@@ -7,6 +7,8 @@ struct AppVersion: Comparable, Hashable, Sendable, CustomStringConvertible {
     let patch: Int
     /// Nil on a stable release, which outranks every prerelease of the same triple.
     let beta: Int?
+    /// The personal edition's `-h.N` rebuild of a release, ranked above the bare release.
+    let revision: Int?
 
     init?(_ text: String) {
         var body = Substring(text.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -24,11 +26,14 @@ struct AppVersion: Comparable, Hashable, Sendable, CustomStringConvertible {
         if halves.count == 2 {
             // `beta` is the only prerelease channel that ships, so anything else is unreadable.
             let suffix = halves[1].split(separator: ".", omittingEmptySubsequences: false)
-            guard suffix.count == 2, suffix[0] == "beta", let count = Self.number(suffix[1])
+            guard suffix.count == 2, suffix[0] == "beta" || suffix[0] == "h",
+                let count = Self.number(suffix[1])
             else { return nil }
-            beta = count
+            beta = suffix[0] == "beta" ? count : nil
+            revision = suffix[0] == "h" ? count : nil
         } else {
             beta = nil
+            revision = nil
         }
         self.major = major
         self.minor = minor
@@ -39,13 +44,14 @@ struct AppVersion: Comparable, Hashable, Sendable, CustomStringConvertible {
 
     var description: String {
         let triple = "\(major).\(minor).\(patch)"
-        return beta.map { "\(triple)-beta.\($0)" } ?? triple
+        return beta.map { "\(triple)-beta.\($0)" } ?? revision.map { "\(triple)-h.\($0)" } ?? triple
     }
 
     static func < (lhs: Self, rhs: Self) -> Bool {
         if lhs.major != rhs.major { return lhs.major < rhs.major }
         if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
         if lhs.patch != rhs.patch { return lhs.patch < rhs.patch }
+        if lhs.beta == nil, rhs.beta == nil { return (lhs.revision ?? 0) < (rhs.revision ?? 0) }
         switch (lhs.beta, rhs.beta) {
         case (nil, nil): return false
         // A prerelease leads to its release, so it sorts below one and never above it.
