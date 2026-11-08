@@ -43,6 +43,7 @@ final class CalculatorCoordinator {
         guard case .value(let display, let copyText) = result.payload, result.canChain,
             !core.palette.isComposing
         else { return false }
+        core.launcherHistoryCoordinator.noteAction()
         calcHistory.record(expression: result.expression, result: display)
         core.palette.rewriteQuery(format.localized(copyText))
         return true
@@ -50,6 +51,7 @@ final class CalculatorCoordinator {
 
     func copyCalculationWithExpression(_ result: CalcResult) {
         guard case .value(let display, let copyText) = result.payload else { return }
+        core.launcherHistoryCoordinator.noteAction()
         calcHistory.record(expression: result.expression, result: display)
         paletteCoordinator.hidePalette(restoreFocus: false)
         let format = format
