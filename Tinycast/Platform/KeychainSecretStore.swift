@@ -14,6 +14,8 @@ struct KeychainSecretStore: Sendable {
     static let aiRequestHeaders = KeychainSecretStore(scope: "ai-request-headers")
     static let mcpSecrets = KeychainSecretStore(scope: "mcp-secrets")
     static let installedAIEnvironment = KeychainSecretStore(scope: "installed-ai-environment")
+    static let sealedStorageKeys = KeychainSecretStore(scope: sealedStorageScope)
+    static let sealedStorageScope = "sealed-storage-keys"
 
     init(scope: String, bundleIdentifier: String? = Bundle.main.bundleIdentifier) {
         service = "\(bundleIdentifier ?? "com.abueammar.tinycast").\(scope)"
