@@ -77,12 +77,12 @@ autoriser » (avec le mot de passe de session). C'est le prix d'une signature au
 chaque élément du trousseau au build exact qui l'a créé. Une version `0.12.1-h.2` corrige `0.12.1-h.1` ; la release officielle suivante arrive
 comme `0.12.2-h.1`. Homebrew n'est pas concerné.
 
-**De 0.12.11-h.1 ou avant vers 0.12.15-h.1 ou après** : comme l'app officielle, l'édition passe de
-`com.tinycast.app` à `com.abueammar.tinycast`. La mise à jour installe un petit relais sous l'ancien
-identifiant, qui met la nouvelle app à sa place et l'ouvre ; réglages et données suivent, et la clé
-des historiques chiffrés est déplacée au premier lancement (l'unique demande habituelle du trousseau,
-cette fois pour l'élément `com.tinycast.app.sealed-storage-keys`). Une seule fois, macOS redemande
-**Accessibilité**, et les clés d'IA ou MCP sont à ressaisir.
+**Depuis 0.12.11-h.1 ou avant** : comme l'app officielle, l'édition est passée de `com.tinycast.app` à
+`com.abueammar.tinycast` en `0.12.15-h.1`, seule release qui déplace réglages, données et clé des
+historiques chiffrés. Installez son DMG à la main
+([v0.12.15-h.1](https://github.com/sylvarg/tinycast-history/releases/tag/v0.12.15-h.1)), lancez-la une
+fois, puis laissez-la se mettre à jour. macOS redemande **Accessibilité**, et les clés d'IA ou MCP sont
+à ressaisir.
 
 **Revenir en arrière** : quittez Tinycast, installez le DMG d'une release précédente de ce dépôt (ou
 la version officielle) dans Applications. Une version plus ancienne de cette édition lit les mêmes

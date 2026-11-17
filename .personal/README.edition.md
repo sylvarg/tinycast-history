@@ -75,12 +75,12 @@ macOS asks **once** for access to the `com.abueammar.tinycast.sealed-storage-key
 keychain item to the exact build that created it. `0.12.1-h.2` corrects `0.12.1-h.1`;
 the next official release arrives as `0.12.2-h.1`. Homebrew is not involved.
 
-**From 0.12.11-h.1 or earlier to 0.12.15-h.1 or later**: like the official app, the edition moved from
-`com.tinycast.app` to `com.abueammar.tinycast`. The update installs a small relay under the old
-identifier that puts the new app in its place and opens it; settings and data move with it, and the
-key of the encrypted histories moves on first launch (the usual single keychain prompt, this time for
-the `com.tinycast.app.sealed-storage-keys` item). Once only, macOS asks for **Accessibility** again,
-and AI or MCP keys must be entered again.
+**From 0.12.11-h.1 or earlier**: like the official app, the edition moved from `com.tinycast.app` to
+`com.abueammar.tinycast` in `0.12.15-h.1`, the only release that moves settings, data and the key of
+the encrypted histories. Install its DMG by hand
+([v0.12.15-h.1](https://github.com/sylvarg/tinycast-history/releases/tag/v0.12.15-h.1)), launch it
+once, then let it update. macOS asks for **Accessibility** again, and AI or MCP keys must be entered
+again.
 
 **Going back**: quit Tinycast and install the DMG of an earlier release from this repository (or the
 official version) into Applications. An older version of this edition reads the same encrypted

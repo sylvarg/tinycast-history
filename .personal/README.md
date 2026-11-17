@@ -63,7 +63,6 @@ est dans des fichiers nouveaux. `tests/check-hooks.sh` échoue si un raccordemen
 | `Features/Launcher/Model/LauncherRankingStore.swift` | paramètre `persistence` (typealias de fermetures, pas de nouveau type, pour que ses harnesses d'origine compilent seuls) | Termes de recherche appris | Moyen |
 | `Features/Backup/Service/BackupComposer.swift` | termes retirés, calculs non exportés | Archive `.tinycast` en clair | Faible |
 | `Platform/KeychainSecretStore.swift` | 1 portée `sealed-storage-keys` (et son nom) | La liste unique des portées du trousseau | Faible |
-| `docs/migrations.md` | 1 ligne `SealedKeyringMigration` (nouveau fichier `Migrations/SealedKeyringMigration.swift`) | Le déplacement d'identifiant de la 0.12.15 change le service du trousseau ; sans cette migration les historiques chiffrés deviennent illisibles. Datée comme celle de l'original (2027-05-13) : `check-migrations.sh` l'exige | Faible (à supprimer avec `BundleIdentifierMigration`) |
 | `Features/Updates/Model/AppVersion.swift` | `revision` (`-h.N`) | Corrections personnelles entre deux releases officielles | Moyen |
 | `Features/Updates/Model/ReleaseFeed.swift` | dépôt | Mises à jour depuis ce dépôt | Faible |
 | `Features/Updates/Service/BundleSignature.swift` | `trustedHash` exige toujours l'exigence désignée de l'app en cours (`runningRequirement` : identifiant + certificat), jamais la clé de release de l'original ni son équipe Developer ID (1 ligne + commentaire) | Ne jamais accepter une build signée par l'équipe du projet original ; la constante `developerID` reste car `updates-test` d'origine la compile | Moyen (l'original a réécrit ce fichier en 0.12.8 puis après) |
@@ -166,11 +165,8 @@ octet** celui de l'app en cours. Une release signée par un autre certificat, do
 original, n'est jamais installée.
 
 **Changement d'identifiant (0.12.15).** L'original est passé de `com.tinycast.app` à
-`com.abueammar.tinycast` ; l'édition suit. Une copie plus ancienne n'installe que son propre
-identifiant : tant que l'original fournit la cible `TinycastHandoff` (jusqu'au 2027-05-13),
-`build-release.sh` publie aussi `Tinycast-<version>-Handoff.zip` — une app relais sous l'ancien
-identifiant, signée par la même identité, qui contient la nouvelle app, prend sa place et l'ouvre —
-et `publish-release.sh` la téléverse en premier, car les anciennes copies prennent le premier zip.
-`BundleIdentifierMigration` (original) déplace réglages et données ; `SealedKeyringMigration`
-(édition) déplace l'élément du trousseau qui porte les clés. Accessibilité est à réautoriser et les
-clés d'IA ou MCP à ressaisir, comme pour l'original.
+`com.abueammar.tinycast` ; l'édition a suivi. Seule `v0.12.15-h.1` porte le relais
+(`Tinycast-0.12.15-h.1-Handoff.zip`, une app sous l'ancien identifiant qui installe la nouvelle) et
+`SealedKeyringMigration`, qui a déplacé l'élément du trousseau des clés. L'original a retiré sa
+migration ([abue-ammar/tinycast#1931](https://github.com/abue-ammar/tinycast/pull/1931)) ; l'édition a retiré la sienne avec. Une copie antérieure à 0.12.15-h.1 doit donc
+installer à la main le DMG de `v0.12.15-h.1`, le lancer une fois, puis se mettre à jour.

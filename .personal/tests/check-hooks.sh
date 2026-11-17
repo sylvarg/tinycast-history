@@ -27,11 +27,6 @@ if grep -rn '"calculator-history.json"\|"launcher-ranking.json"' Tinycast --incl
   echo "a sealed store's legacy file name is used outside its migration"; status=1
 fi
 need Tinycast/Features/Updates/Service/BundleSignature.swift "let requirement = runningRequirement,"
-need Tinycast/Platform/SealedFile.swift "SealedKeyringMigration.move(Account.keyring, from: legacyKeychain, to: keychain)"
-# While upstream ships the handoff, a moved copy must skip it, or it would reinstall the old id.
-if grep -q '^  TinycastHandoff:' project.yml; then
-  need Tinycast/Features/Updates/Model/ReleaseFeed.swift '!$0.name.contains(handoffMarker)'
-fi
 grep -q 'compiled(developerID)' Tinycast/Features/Updates/Service/BundleSignature.swift \
   && { echo "upstream's Developer ID team is still trusted by the updater"; status=1; }
 exit $status

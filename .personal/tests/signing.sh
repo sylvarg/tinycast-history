@@ -35,8 +35,7 @@ security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KPW" "$K
 
 P=Tinycast/Platform
 SOURCES=(Tinycast/Features/Updates/Service/BundleSignature.swift $P/SealedEnvelope.swift $P/SealedFile.swift
-  $P/KeychainSecretStore.swift $P/AppPaths.swift Tinycast/Migrations/SealedKeyringMigration.swift
-  Tests/personal-signature-probe.swift)
+  $P/KeychainSecretStore.swift $P/AppPaths.swift Tests/personal-signature-probe.swift)
 swiftc -swift-version 6 -Onone "${SOURCES[@]}" -o "$W/probe-v1" || exit 1
 swiftc -swift-version 6 -O "${SOURCES[@]}" -o "$W/probe-v2" || exit 1
 cp "$W/probe-v1" "$W/probe-foreign"

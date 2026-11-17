@@ -99,7 +99,7 @@ index 22c322019d0637cbdb8fbbdc07d4d5f81169f2c0..7651fc380252afda615ff56956242d01
          case .quickAI, .aiChat, .calculatorHistory, .clipboardHistory, .searchEmoji, .searchFiles,
              .searchMenuItems, .switchWindows, .switchWindowsBackwards, .createCustomCommand,
 diff --git a/Tinycast/Features/Launcher/Model/CommandID.swift b/Tinycast/Features/Launcher/Model/CommandID.swift
-index ec33a93ed989b87bc4010f7f3a45cc438755928d..d7d2b274b3853aeadbc75412ac7f935e6d38c518 100644
+index 86f3a4e58a967015b67becf989d32a7b865b4511..e4509d4b470bcd2a412df360b4fee4845dde6fd1 100644
 --- a/Tinycast/Features/Launcher/Model/CommandID.swift
 +++ b/Tinycast/Features/Launcher/Model/CommandID.swift
 @@ -9,6 +9,7 @@ enum CommandID: String, CaseIterable, Sendable {
@@ -124,9 +124,18 @@ index ec33a93ed989b87bc4010f7f3a45cc438755928d..d7d2b274b3853aeadbc75412ac7f935e
          case .summarize: return BuiltInQuickAction.summarize.symbol
          case .calculatorHistory: return "plus.forwardslash.minus"
 +        case .clearLauncherHistory: return "clock.arrow.circlepath"
-         case .clipboardHistory: return "doc.on.clipboard"
-         case .pasteSequentially: return "list.bullet.clipboard"
-         case .searchEmoji: return "face.smiling"
+         case .clipboardHistory: return "list.clipboard.fill"
+         case .pasteSequentially: return "arrow.right.doc.on.clipboard"
+         case .searchEmoji: return "face.smiling.inverse"
+@@ -185,7 +189,7 @@ enum CommandID: String, CaseIterable, Sendable {
+             .exportQuicklinks:
+             return .blue
+         case .searchMenuItems, .switchWindows, .switchWindowsBackwards, .runShellCommand,
+-            .createCustomCommand, .searchCustomCommands:
++            .createCustomCommand, .searchCustomCommands, .clearLauncherHistory:
+             return .graphite
+         case .openCamera, .settings, .about: return .gray
+         case .define, .searchSnippets, .createSnippet: return .brown
 diff --git a/Tinycast/Features/Launcher/UI/LauncherCoordinator.swift b/Tinycast/Features/Launcher/UI/LauncherCoordinator.swift
 index 0ee75da844223e63152fca74828e69524e01ae9a..505702ae8e177ad421dde5275440d4610e468410 100644
 --- a/Tinycast/Features/Launcher/UI/LauncherCoordinator.swift
@@ -767,10 +776,10 @@ index 0000000000000000000000000000000000000000..16f8e881c2de0b8d2ce1f27572c368f2
 +    }
 +}
 diff --git a/Tinycast/Palette/RootPaletteView.swift b/Tinycast/Palette/RootPaletteView.swift
-index 124e2b05c0c0800da7330a5ecb2107668bc48db4..ccef731e0ef8e7fa58490f748eee8b6e10622083 100644
+index e76cbec5ce8e3e59cb5d1ba8987972c24c55a05e..172e42dbfcb2902cba092e4c998265376631feeb 100644
 --- a/Tinycast/Palette/RootPaletteView.swift
 +++ b/Tinycast/Palette/RootPaletteView.swift
-@@ -555,6 +555,9 @@ struct RootPaletteView: View {
+@@ -563,6 +563,9 @@ struct RootPaletteView: View {
              .onKeyPress(keys: [.upArrow], phases: [.down, .repeat]) { press in
                  if let reorder = movePinnedOrFavorite(-1, modifiers: press.modifiers) { return reorder }
                  if vm.isControlListOpen { return .ignored }
@@ -780,7 +789,7 @@ index 124e2b05c0c0800da7330a5ecb2107668bc48db4..ccef731e0ef8e7fa58490f748eee8b6e
                  if isCollapsed { return .ignored }
                  if menuOpen {
                      moveMenu(-1)
-@@ -1452,6 +1455,7 @@ struct RootPaletteView: View {
+@@ -1460,6 +1463,7 @@ struct RootPaletteView: View {
      private func activateMenuItem(_ index: Int) {
          guard let content = menuContent, (0..<content.rowCount).contains(index) else { return }
          guard content.isSelectable(index) else { return }
@@ -1491,10 +1500,10 @@ index 0000000000000000000000000000000000000000..460c66a265635cfc4d44674cd276f4f1
 +}
 diff --git a/docs/features/launcher-history.md b/docs/features/launcher-history.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..fca817c5dcea3e58a10c7ef54130e84f83f01fd2
+index 0000000000000000000000000000000000000000..724b1c9727b4cc1dd925a57b0d38266055ba8a35
 --- /dev/null
 +++ b/docs/features/launcher-history.md
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,178 @@
 +# Launcher history (personal edition)
 +
 +**This feature exists only in the personal edition [`sylvarg/tinycast-history`](https://github.com/sylvarg/tinycast-history).**
@@ -1612,9 +1621,6 @@ index 0000000000000000000000000000000000000000..fca817c5dcea3e58a10c7ef54130e84f
 +of this edition satisfies the requirement but not the partition, so **after each update macOS asks
 +once** (*Always Allow*, with the login password) for the keyring item; that is why every key lives
 +in a single item. Only a Developer ID (a Team ID partition) would remove that prompt.
-+The item's service carries the bundle id, so when the official 0.12.15 moved the app from
-+`com.tinycast.app` to `com.abueammar.tinycast`, `SealedKeyringMigration` moves the old id's keyring
-+item to the new one on first use (the same single prompt) before the old item is deleted.
 +This edition deliberately uses the file-based keychain: the data-protection keychain and access
 +groups need a provisioning profile, which a self-signed app without a paid Apple Developer account
 +cannot have ([TN3137](https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains)).

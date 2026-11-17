@@ -45,7 +45,7 @@ index 5107d0fd16514a93b1bb70b54d488b7ce1a0af9f..a5c4497b89e24736a4d5cde38de39d45
          case (nil, nil): return false
          // A prerelease leads to its release, so it sorts below one and never above it.
 diff --git a/Tinycast/Features/Updates/Model/ReleaseFeed.swift b/Tinycast/Features/Updates/Model/ReleaseFeed.swift
-index d5c966bc7f851b04eb1432fceae728be50189e27..7c51c31ecaca91f4439fb19e0f2c916f0363489d 100644
+index d80800b9bb91df47272d0be4da2fa4095a22e3db..c0bd75413a92fda708e4edc3f29429a4089391ae 100644
 --- a/Tinycast/Features/Updates/Model/ReleaseFeed.swift
 +++ b/Tinycast/Features/Updates/Model/ReleaseFeed.swift
 @@ -11,7 +11,7 @@ struct AvailableRelease: Codable, Hashable, Sendable {
@@ -72,7 +72,7 @@ index a038f7bf07e46f054417640740c3bfc22d51680a..f1935d094b571372bb99098fdf9017cd
          else { return nil }
          return uniqueHash(of: staticCode)
 diff --git a/Tinycast/Windows/About/AboutView.swift b/Tinycast/Windows/About/AboutView.swift
-index 52dc67236d2b4d4376d48978a6cc5e84e8207f37..db55c1c1ad2c5a70ea88631da894e0a5c5445f43 100644
+index 08725c89de12e9bd0ad8dc48e123e9a5f2a66278..742237eb661810cb643d031d3678f8b549ada54a 100644
 --- a/Tinycast/Windows/About/AboutView.swift
 +++ b/Tinycast/Windows/About/AboutView.swift
 @@ -33,6 +33,7 @@ struct AboutView: View {
@@ -80,9 +80,9 @@ index 52dc67236d2b4d4376d48978a6cc5e84e8207f37..db55c1c1ad2c5a70ea88631da894e0a5
                  }
                  .settingsAnchor(.aboutAbout)
 +                PersonalEditionSection()
+                 updates
                  links
                  support
-             }
 diff --git a/Tinycast/Windows/About/PersonalEditionSection.swift b/Tinycast/Windows/About/PersonalEditionSection.swift
 new file mode 100644
 index 0000000000000000000000000000000000000000..d081b7fbe0ece2e614127ad889c1afd4b43271c9

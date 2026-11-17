@@ -124,48 +124,15 @@ index 46f3857889ebfc39b2d7193241fb3e3f1721abda..9b5258b87fcb07e4a4ff8272c8bfeef2
              try? data.write(to: fileURL, options: .atomic)
          }
      }
-diff --git a/Tinycast/Migrations/SealedKeyringMigration.swift b/Tinycast/Migrations/SealedKeyringMigration.swift
-new file mode 100644
-index 0000000000000000000000000000000000000000..8e047adf2e3f0e2b2794cad6c649a54c93f65321
---- /dev/null
-+++ b/Tinycast/Migrations/SealedKeyringMigration.swift
-@@ -0,0 +1,26 @@
-+import Foundation
-+
-+/// The sealed files' keyring, still under the bundle id `BundleIdentifierMigration` moves from.
-+enum SealedKeyringMigration {
-+    private static let currentPrefix = "com.abueammar.tinycast"
-+    private static let legacyPrefix = "com.tinycast.app"
-+
-+    static let legacyKeychain: KeychainSecretStore? = Bundle.main.bundleIdentifier
-+        .flatMap(legacyIdentifier(of:))
-+        .map { KeychainSecretStore(scope: KeychainSecretStore.sealedStorageScope, bundleIdentifier: $0) }
-+
-+    static func legacyIdentifier(of bundleID: String) -> String? {
-+        guard bundleID == currentPrefix || bundleID.hasPrefix(currentPrefix + ".") else { return nil }
-+        return legacyPrefix + bundleID.dropFirst(currentPrefix.count)
-+    }
-+
-+    /// Copied before the old item goes, so a failure in between leaves a key rather than none.
-+    static func move(
-+        _ account: UUID, from legacy: KeychainSecretStore, to current: KeychainSecretStore
-+    ) throws -> String? {
-+        guard let stored = try legacy.secret(for: account) else { return nil }
-+        try current.setSecret(stored, for: account)
-+        try? legacy.removeSecret(for: account)
-+        return stored
-+    }
-+}
 diff --git a/Tinycast/Platform/KeychainSecretStore.swift b/Tinycast/Platform/KeychainSecretStore.swift
-index 76c838a30eb1f3355ed9e91a8e2bed50763c929d..496131d9bd129bed9164f2172bc416eef5f917cb 100644
+index 76c838a30eb1f3355ed9e91a8e2bed50763c929d..600c76648e827b19bc46f05511f43faa2dbe6d53 100644
 --- a/Tinycast/Platform/KeychainSecretStore.swift
 +++ b/Tinycast/Platform/KeychainSecretStore.swift
-@@ -14,6 +14,8 @@ struct KeychainSecretStore: Sendable {
+@@ -14,6 +14,7 @@ struct KeychainSecretStore: Sendable {
      static let aiRequestHeaders = KeychainSecretStore(scope: "ai-request-headers")
      static let mcpSecrets = KeychainSecretStore(scope: "mcp-secrets")
      static let installedAIEnvironment = KeychainSecretStore(scope: "installed-ai-environment")
-+    static let sealedStorageKeys = KeychainSecretStore(scope: sealedStorageScope)
-+    static let sealedStorageScope = "sealed-storage-keys"
++    static let sealedStorageKeys = KeychainSecretStore(scope: "sealed-storage-keys")
  
      init(scope: String, bundleIdentifier: String? = Bundle.main.bundleIdentifier) {
          service = "\(bundleIdentifier ?? "com.abueammar.tinycast").\(scope)"
@@ -221,10 +188,10 @@ index 0000000000000000000000000000000000000000..964f2653230a417f73ca9d7f9e151a09
 +}
 diff --git a/Tinycast/Platform/SealedFile.swift b/Tinycast/Platform/SealedFile.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..03199e51c92aa0329f2ea8e46573ee826116fe6d
+index 0000000000000000000000000000000000000000..60a1c719df4b34fba3b463f296ad540d9955d854
 --- /dev/null
 +++ b/Tinycast/Platform/SealedFile.swift
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,261 @@
 +import CryptoKit
 +import Darwin
 +import Foundation
@@ -271,7 +238,6 @@ index 0000000000000000000000000000000000000000..03199e51c92aa0329f2ea8e46573ee82
 +    private let purpose: String
 +    private let account: UUID
 +    private let keychain: KeychainSecretStore
-+    private let legacyKeychain: KeychainSecretStore?
 +    private let isBlocked = Mutex(false)
 +    /// Every file rewrites the same keyring item, so its read-modify-write is serialized.
 +    private static let keyringLock = Mutex(())
@@ -279,15 +245,13 @@ index 0000000000000000000000000000000000000000..03199e51c92aa0329f2ea8e46573ee82
 +    init(
 +        name: String, legacyName: String? = nil, account: UUID,
 +        directory: URL = AppPaths.applicationSupport(),
-+        keychain: KeychainSecretStore = .sealedStorageKeys,
-+        legacyKeychain: KeychainSecretStore? = SealedKeyringMigration.legacyKeychain
++        keychain: KeychainSecretStore = .sealedStorageKeys
 +    ) {
 +        url = directory.appendingPathComponent(name, isDirectory: false)
 +        legacyURL = legacyName.map { directory.appendingPathComponent($0, isDirectory: false) }
 +        purpose = name
 +        self.account = account
 +        self.keychain = keychain
-+        self.legacyKeychain = legacyKeychain
 +    }
 +
 +    var blocked: Bool { isBlocked.withLock { $0 } }
@@ -455,13 +419,9 @@ index 0000000000000000000000000000000000000000..03199e51c92aa0329f2ea8e46573ee82
 +
 +    /// An unreadable keyring throws: rewriting it would lose the keys of the other files.
 +    private func keyring() throws(Failure) -> [String: String] {
-+        var stored = try keychainCall { try keychain.secret(for: Account.keyring) }
-+        if stored == nil, let legacyKeychain {
-+            stored = try keychainCall {
-+                try SealedKeyringMigration.move(Account.keyring, from: legacyKeychain, to: keychain)
-+            }
++        guard let stored = try keychainCall({ try keychain.secret(for: Account.keyring) }) else {
++            return [:]
 +        }
-+        guard let stored else { return [:] }
 +        guard let entries = try? JSONDecoder().decode([String: String].self, from: Data(stored.utf8))
 +        else { throw .keychain(errSecDecode) }
 +        return entries
@@ -493,15 +453,3 @@ index 0000000000000000000000000000000000000000..03199e51c92aa0329f2ea8e46573ee82
 +        }
 +    }
 +}
-diff --git a/docs/migrations.md b/docs/migrations.md
-index f61d6da3123ea289ee88c641295d6b2e72159a49..d3a902e2020ec3f413e22703bcd45cc7fccdbd6b 100644
---- a/docs/migrations.md
-+++ b/docs/migrations.md
-@@ -37,6 +37,7 @@ When the check fails, delete everything the row lists, then the row. Then run `x
- | Migration | Repairs | Delete with it |
- | --- | --- | --- |
- | `BundleIdentifierMigration` | Moves `com.tinycast.app[.beta\|.dev]`'s preferences, Application Support and Caches folders and login item to `com.abueammar.tinycast[.beta\|.dev]`, and repoints every saved path into the old folders: in preferences (JSON-encoded ones too), JSON files, clipboard and quicklink rows, and `settings.json`. A `paths-repointed` marker in its backup makes it repair, once, a copy 0.12.14-beta.141 moved without repointing. Keychain secrets stay behind: moving them asks once per item, so users enter them again. Kept until **2027-05-13** | Everything in [Removing the bundle id move](#removing-the-bundle-id-move) |
-+| `SealedKeyringMigration` | Personal edition: moves the sealed files' keyring item from `com.tinycast.app[.dev].sealed-storage-keys` to the new id's on first use, since without it the encrypted histories cannot be opened. Asks once, like any new build of this self-signed edition. Kept until **2027-05-13**, with the bundle id move | `Tinycast/Migrations/SealedKeyringMigration.swift`; `SealedFile`'s `legacyKeychain` and its use in `keyring()`; `movesTheKeyringFromTheOldBundleID` in `Tests/sealed-storage-test.swift` |
- 
- ### Removing the bundle id move
- 

@@ -39,7 +39,6 @@ check() {
 
 harness launcher-history-test $LH/Model/*.swift
 harness sealed-storage-test $P/SealedEnvelope.swift $P/SealedFile.swift $P/KeychainSecretStore.swift \
-  Tinycast/Migrations/SealedKeyringMigration.swift \
   $P/AppPaths.swift $P/Memo.swift $LH/Model/LauncherHistory.swift \
   $L/SearchRelevance.swift $L/ScriptRomanization.swift $L/LauncherMatch.swift $L/LauncherRankingStore.swift \
   Tinycast/Features/Calculator/Service/CalculatorHistoryStore.swift

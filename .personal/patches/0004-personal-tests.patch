@@ -335,10 +335,10 @@ index 0000000000000000000000000000000000000000..07686bc09c46602a9066c10619a5f5fc
 +}
 diff --git a/Tests/personal-edition-test.swift b/Tests/personal-edition-test.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..935f85a0776c8bb5a0072542c536425e67471dcd
+index 0000000000000000000000000000000000000000..92ef2e885580f057f635de6a224797f459c363e2
 --- /dev/null
 +++ b/Tests/personal-edition-test.swift
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,89 @@
 +import Foundation
 +
 +/// The edition's release identity: `-h.N` revisions, our feed, and what is offered as an update.
@@ -360,7 +360,6 @@ index 0000000000000000000000000000000000000000..935f85a0776c8bb5a0072542c536425e
 +        parsesRevisions()
 +        ordersRevisionsBetweenOfficialReleases()
 +        offersRevisionsFromThisRepository()
-+        installsTheAppRatherThanTheHandoff()
 +
 +        print("\(passes) passed, \(failures) failed")
 +        if failures > 0 { exit(1) }
@@ -428,20 +427,6 @@ index 0000000000000000000000000000000000000000..935f85a0776c8bb5a0072542c536425e
 +        expect(ReleaseChannel(bundleID: "com.abueammar.tinycast") == .stable,
 +            "the edition keeps the stable id")
 +    }
-+
-+    static func installsTheAppRatherThanTheHandoff() {
-+        let data = Data(
-+            """
-+            [{"tag_name": "v0.12.15-h.1", "prerelease": false, "draft": false, "published_at": null,
-+              "assets": [{"name": "Tinycast-0.12.15-h.1-Handoff.zip", "size": 10,
-+                          "browser_download_url": "https://example.invalid/handoff.zip"},
-+                         {"name": "Tinycast-0.12.15-h.1.zip", "size": 10,
-+                          "browser_download_url": "https://example.invalid/app.zip"}]}]
-+            """.utf8)
-+        let newest = ReleaseFeed.newest(from: data, channel: .stable, architecture: .appleSilicon)
-+        expect(newest?.assetURL.lastPathComponent == "app.zip",
-+            "a copy already moved installs the app, not the handoff listed first for older ones")
-+    }
 +}
 diff --git a/Tests/personal-signature-probe.swift b/Tests/personal-signature-probe.swift
 new file mode 100644
@@ -493,10 +478,10 @@ index 0000000000000000000000000000000000000000..84e86cf53c0a5a67547ae76f6d2d912e
 +}
 diff --git a/Tests/sealed-storage-test.swift b/Tests/sealed-storage-test.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..58ba948cff439ab691abb7ae4ac77d0ca26cb2ff
+index 0000000000000000000000000000000000000000..2fe253807796590572851a189a474ea75d364c2b
 --- /dev/null
 +++ b/Tests/sealed-storage-test.swift
-@@ -0,0 +1,417 @@
+@@ -0,0 +1,385 @@
 +import CryptoKit
 +import Foundation
 +
@@ -533,7 +518,6 @@ index 0000000000000000000000000000000000000000..58ba948cff439ab691abb7ae4ac77d0c
 +        erasesOneStoreAndItsKeyOnly()
 +        keepsEveryKeyInOneItem()
 +        movesAnEarlierKeyIntoTheKeyring()
-+        movesTheKeyringFromTheOldBundleID()
 +        boundsTheFileSize()
 +        reportsAFailedWrite()
 +        sealsTheLauncherHistory()
@@ -790,37 +774,6 @@ index 0000000000000000000000000000000000000000..58ba948cff439ab691abb7ae4ac77d0c
 +        expect(read(makeFile(root, account: account)) == plaintext, "the next launch reads the keyring")
 +        expect((try? makeFile(root, account: account).write(Data("new".utf8))) != nil,
 +            "and writes under the same key")
-+    }
-+
-+    static func movesTheKeyringFromTheOldBundleID() {
-+        func store(_ name: String) -> KeychainSecretStore {
-+            KeychainSecretStore(scope: "\(name)-\(UUID().uuidString)", bundleIdentifier: "com.tinycast.tests")
-+        }
-+        let legacy = store("sealed-storage-test-legacy")
-+        let current = store("sealed-storage-test-current")
-+        defer {
-+            try? legacy.removeSecret(for: SealedFile.Account.keyring)
-+            try? current.removeSecret(for: SealedFile.Account.keyring)
-+        }
-+        let root = makeRoot()
-+        let account = newAccount()
-+        let plaintext = Data(marker.utf8)
-+        let before = SealedFile(
-+            name: "store.enc", account: account, directory: root, keychain: legacy, legacyKeychain: nil)
-+        _ = try? before.write(plaintext)
-+        let after = SealedFile(
-+            name: "store.enc", account: account, directory: root, keychain: current, legacyKeychain: legacy)
-+        expect(read(after) == plaintext, "a file sealed under the old bundle id opens under the new one")
-+        expect((try? current.values(for: SealedFile.Account.keyring))?[account.uuidString] != nil,
-+            "the keyring moved to the new id")
-+        expect((try? legacy.hasSecret(for: SealedFile.Account.keyring)) == false, "and the old item is gone")
-+        expect(read(after) == plaintext, "the next launch reads the moved keyring")
-+        expect(SealedKeyringMigration.legacyIdentifier(of: "com.abueammar.tinycast") == "com.tinycast.app",
-+            "the shipped id takes the keyring of com.tinycast.app")
-+        let dev = SealedKeyringMigration.legacyIdentifier(of: "com.abueammar.tinycast.dev")
-+        expect(dev == "com.tinycast.app.dev", "a Dev build takes its own channel's")
-+        expect(SealedKeyringMigration.legacyIdentifier(of: "com.tinycast.app") == nil,
-+            "a build under the old id moves nothing")
 +    }
 +
 +    static func boundsTheFileSize() {

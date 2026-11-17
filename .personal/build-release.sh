@@ -67,33 +67,6 @@ diskutil image create from "$STAGE" --format UDZO --volumeName "Tinycast" "$DMG"
 # Only `ditto` keeps the seal and symlinks the updater's signature check needs.
 ditto -c -k --keepParent --sequesterRsrc "$APP" "$ZIP"
 
-# Copies from before the official 0.12.15 move install only their old bundle id: as long as upstream
-# ships its handoff target, that id carries the app, swaps it into its place and opens it.
-HANDOFF_ZIP="dist/Tinycast-$VERSION-Handoff.zip"
-if grep -q '^  TinycastHandoff:' project.yml; then
-  xcodebuild -project Tinycast.xcodeproj -target TinycastHandoff -configuration Release \
-    SYMROOT="$W/handoff" ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
-    CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Tinycast Self-Signed" OTHER_CODE_SIGN_FLAGS="--timestamp=none" \
-    PRODUCT_NAME="Tinycast" TINYCAST_LEGACY_BUNDLE_IDENTIFIER="com.tinycast.app" \
-    MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" build > "$W/handoff.log" 2>&1 \
-    || { grep -E ': error: ' "$W/handoff.log" | head -40; tail -40 "$W/handoff.log"; exit 1; }
-  HANDOFF="$W/handoff/Release/Tinycast.app"
-  rm -rf "$HANDOFF/Contents/Helpers" && mkdir -p "$HANDOFF/Contents/Helpers"
-  ditto "$APP" "$HANDOFF/Contents/Helpers/Tinycast.app"
-  codesign --force --sign "Tinycast Self-Signed" --options runtime --timestamp=none "$HANDOFF"
-  ditto -c -k --keepParent --sequesterRsrc "$HANDOFF" "$HANDOFF_ZIP"
-  # What an old copy's updater checks: its own id, the release's version, the same leaf.
-  ditto -x -k "$HANDOFF_ZIP" "$W/unhandoff"
-  H="$W/unhandoff/Tinycast.app"
-  codesign --verify --deep --strict "$H"
-  [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$H/Contents/Info.plist")" = com.tinycast.app ]
-  [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$H/Contents/Info.plist")" = "$VERSION" ]
-  [ "$(leaf_of "$H")" = "$app_sha" ]
-  [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$H/Contents/Helpers/Tinycast.app/Contents/Info.plist")" \
-    = com.abueammar.tinycast ]
-  echo "handoff: com.tinycast.app carries com.abueammar.tinycast $VERSION"
-fi
-
 # Check what was packed, as the updater and a person dragging from the DMG will receive it.
 ditto -x -k "$ZIP" "$W/unzipped"
 UNZIPPED="$W/unzipped/Tinycast.app"
@@ -108,5 +81,5 @@ codesign --verify --deep --strict "$MOUNT/Tinycast.app"
 hdiutil detach "$MOUNT" > /dev/null
 # The signed app itself: it starts, and seals what an official install left in the clear.
 .personal/tests/keychain-sandbox.sh .personal/tests/app-smoke.sh "$UNZIPPED"
-(cd dist && shasum -a 256 Tinycast-"$VERSION".dmg Tinycast-"$VERSION"*.zip > "Tinycast-$VERSION.sha256")
+(cd dist && shasum -a 256 "Tinycast-$VERSION.dmg" "Tinycast-$VERSION.zip" > "Tinycast-$VERSION.sha256")
 ls -l dist
