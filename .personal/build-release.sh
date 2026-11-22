@@ -33,12 +33,16 @@ while IFS= read -r binary; do
   slices="$(lipo -archs "$binary" 2> /dev/null || true)"
   [ -z "$slices" ] || [ "$slices" = arm64 ] || { echo "::error::${binary#$APP/}: $slices"; exit 1; }
 done < <(find "$APP/Contents/MacOS" "$APP/Contents/Helpers" -type f -perm -u+x)
-# Upstream's verifier minus its Developer ID check, which a self-signed, unnotarized edition fails.
-sed '/Authority=Developer ID Application/,/not signed with a timestamped Developer ID/d' \
+# Upstream's verifier minus its Developer ID and iCloud checks: a self-signed, unnotarized edition
+# has no team, no provisioning profile, and so must not claim iCloud at all.
+sed -e '/Authority=Developer ID Application/,/not signed with a timestamped Developer ID/d' \
+  -e '/^# iCloud Sync:/,/push is not set to production/d' \
   Scripts/verify-signature.sh > "$W/verify-signature.sh"
-! grep -q 'Developer ID' "$W/verify-signature.sh" \
-  || { echo "::error::Scripts/verify-signature.sh changed its Developer ID check; update this filter"; exit 1; }
+! grep -qE 'Developer ID|provisionprofile|icloud' "$W/verify-signature.sh" \
+  || { echo "::error::Scripts/verify-signature.sh changed its Developer ID or iCloud checks; update this filter"; exit 1; }
 bash "$W/verify-signature.sh" "$APP"
+! codesign -d --entitlements :- "$APP" 2> /dev/null | grep -qE 'com\.apple\.developer\.(icloud|aps)' \
+  || { echo "::error::the app claims iCloud or push, which macOS refuses without a profile"; exit 1; }
 codesign -dvvv "$APP" 2>&1 | grep -qx "Authority=Tinycast Self-Signed" || { echo "::error::not signed by Tinycast Self-Signed"; exit 1; }
 leaf_of() { # bundle -> sha256 of its leaf certificate
   local out; out="$(mktemp -d)"

@@ -218,7 +218,7 @@ final class SealedFile: Sendable {
         return key
     }
 
-    /// Settings runs as a second process, so the keyring's read-modify-write also holds a file lock.
+    /// Settings runs in a second process, so a keyring update also holds a file lock.
     private func withKeyringLock<Value>(_ body: () throws(Failure) -> Value) throws(Failure) -> Value {
         try Self.keyringLock.withLock { _ throws(Failure) -> Value in
             let descriptor = Darwin.open(keyringLockURL.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)

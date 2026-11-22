@@ -209,7 +209,7 @@ index 0000000000000000000000000000000000000000..964f2653230a417f73ca9d7f9e151a09
 +}
 diff --git a/Tinycast/Platform/SealedFile.swift b/Tinycast/Platform/SealedFile.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..fb99547551e6b5fb9fcbb85dfcc714be49e21aae
+index 0000000000000000000000000000000000000000..ab76702049f1d25f8fccd5279b220699e5a5e34d
 --- /dev/null
 +++ b/Tinycast/Platform/SealedFile.swift
 @@ -0,0 +1,274 @@
@@ -433,7 +433,7 @@ index 0000000000000000000000000000000000000000..fb99547551e6b5fb9fcbb85dfcc714be
 +        return key
 +    }
 +
-+    /// Settings runs as a second process, so the keyring's read-modify-write also holds a file lock.
++    /// Settings runs in a second process, so a keyring update also holds a file lock.
 +    private func withKeyringLock<Value>(_ body: () throws(Failure) -> Value) throws(Failure) -> Value {
 +        try Self.keyringLock.withLock { _ throws(Failure) -> Value in
 +            let descriptor = Darwin.open(keyringLockURL.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
