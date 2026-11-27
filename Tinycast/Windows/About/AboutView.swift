@@ -22,6 +22,7 @@ struct AboutView: View {
                         .padding(.vertical, Theme.Spacing.lg)
                 }
                 .settingsAnchor(.aboutAbout)
+                PersonalEditionSection()
                 updates
                 links
                 support

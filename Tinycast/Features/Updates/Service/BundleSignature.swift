@@ -14,7 +14,8 @@ enum BundleSignature {
         var staticCode: SecStaticCode?
         guard SecStaticCodeCreateWithPath(bundleURL as CFURL, [], &staticCode) == errSecSuccess,
             let staticCode,
-            let requirement = releaseSigned ? compiled(developerID) : runningRequirement,
+            // Neither upstream's release key nor its team: only this edition's own identity.
+            let requirement = runningRequirement,
             SecStaticCodeCheckValidity(staticCode, flags, requirement) == errSecSuccess
         else { return nil }
         return uniqueHash(of: staticCode)
